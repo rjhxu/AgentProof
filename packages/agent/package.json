@@ -10,7 +10,10 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run --passWithNoTests",
-    "smoke": "tsx src/smoke.ts"
+    "smoke": "tsx src/smoke.ts",
+    "demo:smoke": "node scripts/demo-smoke.mjs",
+    "demo:repository": "node scripts/repository-smoke.mjs",
+    "demo:repository:live": "node scripts/repository-live-smoke.mjs"
   },
   "dependencies": {
     "@agentproof/shared": "workspace:*",

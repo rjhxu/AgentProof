@@ -8,6 +8,10 @@ import type {
   RunEvent,
   StartRunsRequest,
   StartRunsResponse,
+  ProposeRepairResponse,
+  ApplyRepairResponse,
+  ConnectRepositoryRequest,
+  RepositoryResponse,
 } from '@agentproof/shared';
 
 /**
@@ -19,7 +23,10 @@ const BASE = process.env.NEXT_PUBLIC_RUNNER_URL ?? 'http://localhost:4000';
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     ...init,
-    headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
+    headers: {
+      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(init?.headers ?? {}),
+    },
     cache: 'no-store',
   });
   if (!res.ok) {
@@ -30,6 +37,19 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  getRepository: (runId: string) => call<RepositoryResponse>(`/runs/${runId}/repository`),
+  connectRepository: (runId: string, body: ConnectRepositoryRequest) =>
+    call<RepositoryResponse>(`/runs/${runId}/repository`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  disconnectRepository: (runId: string) =>
+    call<RepositoryResponse>(`/runs/${runId}/repository`, { method: 'DELETE' }),
+  demoMission: () => call<CreateMissionResponse>('/demo/hoodie', { method: 'POST' }),
+  proposeRepair: (issueId: string) =>
+    call<ProposeRepairResponse>(`/issues/${issueId}/repair`, { method: 'POST' }),
+  applyRepair: (repairId: string) =>
+    call<ApplyRepairResponse>(`/repairs/${repairId}/apply`, { method: 'POST' }),
   createMission: (body: CreateMissionRequest) =>
     call<CreateMissionResponse>('/missions', { method: 'POST', body: JSON.stringify(body) }),
   startRuns: (missionId: string, body: StartRunsRequest) =>

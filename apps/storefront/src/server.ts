@@ -5,7 +5,7 @@ import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
 import formbody from '@fastify/formbody';
 import fastifyStatic from '@fastify/static';
-import { addToCart, clearCart, getCart } from './cart';
+import { addToCart, clearCart, getCart, resolveVariantId } from './cart';
 import { findProductBySlug, findVariant, products } from './catalog';
 import { cartPage, catalogPage, checkoutPage, layout, productPage } from './views';
 
@@ -27,6 +27,8 @@ app.addHook('onRequest', async (req, reply) => {
   }
 });
 const sid = (req: { cookies: Record<string, string | undefined> }) => req.cookies[SESSION_COOKIE]!;
+
+app.get('/health', async () => ({ ok: true, hoodieVariantId: resolveVariantId('HOODIE-001-M') }));
 
 // ---- HTML pages -----------------------------------------------------------------
 app.get('/', async (req, reply) => {

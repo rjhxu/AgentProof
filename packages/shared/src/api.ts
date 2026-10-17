@@ -44,7 +44,10 @@ export const DiagnoseResponse = z.object({ issue: Issue });
 export const ProposeRepairResponse = z.object({ repair: Repair });
 
 // POST /repairs/:id/apply  -> apply to the owned storefront checkout
-export const ApplyRepairResponse = z.object({ repair: Repair });
+export const ApplyRepairResponse = z.object({
+  repair: Repair,
+  storefrontReady: z.boolean().optional(),
+});
 
 export const ErrorResponse = z.object({ error: z.string() });
 

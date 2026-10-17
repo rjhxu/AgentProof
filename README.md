@@ -68,4 +68,8 @@ mission prompt ──> Mission (Claude, structured) ──> runs per agent (Alph
 
 ## Status
 
-Scaffold. Schemas, verifier, storefront, runner API surface, and dashboard shell are in place. See `TODO(devN)` markers for what each owner picks up first.
+The Gamma milestone works end to end without an API key: run the preset hoodie mission in the dashboard, inspect live catalog/cart evidence, review and apply the targeted mapping repair, then run a rematch and compare checkpoints. Start all three services with `pnpm dev`; storefront watch mode is required to reload repairs. See [docs/DEMO.md](docs/DEMO.md).
+
+Failed Gamma runs also prompt for GitHub repository access. Connect a public repo or provide a temporary read token for a private repo; the runner saves a source snapshot and displays its branch, commit, and file inventory. Tokens are not persisted. Model-generated suggestions will be added separately.
+
+Shared schemas, deterministic verification, SQLite persistence, and the synthetic storefront are implemented. Alpha/Beta browser execution and general AI-generated repairs remain unfinished. The Gamma diagnosis/repair is a deterministic rule for the known hoodie bug, not an AI-generated fix.
