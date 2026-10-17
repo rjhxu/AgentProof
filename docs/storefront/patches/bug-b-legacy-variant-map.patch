@@ -1,0 +1,13 @@
+--- a/apps/storefront/src/cart.ts
++++ b/apps/storefront/src/cart.ts
+@@ -29,9 +29,7 @@
+  * The expected repair deletes this map (or fixes the M entry). Keep the marker comment
+  * so the diagnostics package can locate it.
+  */
+-const LEGACY_VARIANT_MAP: Record<string, string> = {
+-  'HOODIE-001-M': 'HOODIE-001-S', // BUG: should be HOODIE-001-M
+-};
++const LEGACY_VARIANT_MAP: Record<string, string> = {};
+ 
+ export function resolveVariantId(requested: string): string {
+   return LEGACY_VARIANT_MAP[requested] ?? requested;

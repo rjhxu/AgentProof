@@ -1,0 +1,68 @@
+--- a/apps/storefront/src/views.ts
++++ b/apps/storefront/src/views.ts
+@@ -1,5 +1,5 @@
+ import type { Cart } from './cart';
+-import { attributeValues, valueInStock, type Product } from './catalog';
++import type { Product } from './catalog';
+ import { buyForm, optionGroup, quantityInput, remainingOptions, variantScript } from './controls';
+ import { featureLayout } from './feature-layout';
+ import { esc, money, productImage, titleCase } from './html';
+@@ -59,45 +59,6 @@
+   return `<h1>All products</h1><section class="grid" aria-label="Products">${cards}</section>`;
+ }
+ 
+-/**
+- * DEMO BUG A (spec example A, "The Visually Functional Store").
+- * The size picker is a row of <div> chips. A sighted shopper (and a vision agent) sees
+- * "S M L" and clicks one. There is no form control, role, label, or keyboard handling,
+- * so a semantic agent reading the accessibility tree finds nothing to select, and the
+- * hidden input keeps its default (first size).
+- *
+- * Expected repair: a <fieldset><legend>Size</legend> of radio inputs with labels,
+- * or buttons with role="radio" + aria-checked inside role="radiogroup" aria-label="Size".
+- * (controls.ts already has optionGroup(), which renders exactly that.)
+- */
+-function legacySizeChips(product: Product): string {
+-  const sizes = attributeValues(product, 'size');
+-  if (sizes.length === 0) return '';
+-  const initial = sizes.find((s) => valueInStock(product, 'size', s)) ?? sizes[0]!;
+-  const chips = sizes
+-    .map((s) => {
+-      const cls = `chip${s === initial ? ' selected' : ''}${valueInStock(product, 'size', s) ? '' : ' sold-out'}`;
+-      return `<div class="${cls}" data-size="${esc(s)}">${esc(s)}</div>`;
+-    })
+-    .join('');
+-  return `
+-    <div class="option-row">
+-      <span class="option-label">Size</span>
+-      <div class="size-picker">${chips}</div>
+-      <input type="hidden" name="size" value="${esc(initial)}">
+-    </div>
+-    <script>
+-    // Chip picker wiring (mouse only - part of DEMO BUG A).
+-    document.querySelectorAll('.size-picker .chip:not(.sold-out)').forEach((chip) => {
+-      chip.addEventListener('click', () => {
+-        document.querySelectorAll('.size-picker .chip').forEach((c) => c.classList.remove('selected'));
+-        chip.classList.add('selected');
+-        document.querySelector('input[name=size]').value = chip.dataset.size;
+-      });
+-    });
+-    </script>`;
+-}
+-
+ /** Standard two-column product page used by every template except `feature`. */
+ function productShell(product: Product, controls: string): string {
+   return `
+@@ -119,10 +80,10 @@
+ export function productPage(product: Product): string {
+   let page: string;
+   switch (product.template) {
+-    case 'classic': // hoodies: legacy chip size picker (DEMO BUG A)
++    case 'classic': // hoodies
+       page = productShell(
+         product,
+-        legacySizeChips(product) + remainingOptions(product, ['size']) + quantityInput(),
++        optionGroup(product, 'size') + remainingOptions(product, ['size']) + quantityInput(),
+       );
+       break;
+     case 'apparel': // crewneck: color swatches (DEMO BUG C)

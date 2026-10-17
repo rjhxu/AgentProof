@@ -12,7 +12,7 @@ import type { AgentAction, AgentConfig, Evidence, Mission, RunStep } from '@agen
  *     record   -> RunStep + Evidence, emit to the runner
  *   until done / fail / step limit
  *
- * OWNER: Developer 2. This file is a skeleton with the loop shape and the
+ * OWNER: Ryan. This file is a skeleton with the loop shape and the
  * extension points; the TODOs mark where the real work goes.
  */
 
@@ -74,7 +74,7 @@ export async function observe(page: Page, kind: AgentConfig['kind']): Promise<Ob
     const buf = await page.screenshot({ type: 'png' });
     return { url, title, textExcerpt, screenshotBase64: buf.toString('base64') };
   }
-  // TODO(dev2): replace with a compact role/name tree (page.accessibility is deprecated in
+  // TODO(ryan): replace with a compact role/name tree (page.accessibility is deprecated in
   // recent Playwright; use page.locator('body').ariaSnapshot()).
   const accessibilityTree = await page.locator('body').ariaSnapshot();
   return { url, title, textExcerpt, accessibilityTree };
@@ -86,7 +86,7 @@ export async function decide(
   _obs: Observation,
   _history: RunStep[],
 ): Promise<AgentAction> {
-  // TODO(dev2): call getClaude().messages.parse with zodOutputFormat(AgentAction).
+  // TODO(ryan): call getClaude().messages.parse with zodOutputFormat(AgentAction).
   // Include: mission.requirements, allowed actions, step budget remaining, last 5 steps,
   // and the observation (image block for Beta). Never pass the raw prompt - only the structured mission.
   throw new Error('decide() not implemented');
@@ -99,7 +99,7 @@ export async function act(page: Page, action: AgentAction): Promise<void> {
       await page.goto(action.url, { waitUntil: 'domcontentloaded' });
       return;
     case 'click':
-      // TODO(dev2): resolve `target` - Alpha: "role:name" or CSS; Beta: "x,y" -> page.mouse.click
+      // TODO(ryan): resolve `target` - Alpha: "role:name" or CSS; Beta: "x,y" -> page.mouse.click
       await page.locator(action.target).first().click({ timeout: 5000 });
       return;
     case 'type':
@@ -130,6 +130,6 @@ export async function runBrowserAgent(
   _artifactDir: string,
   _cb: AgentCallbacks,
 ): Promise<BrowserAgentResult> {
-  // TODO(dev2): implement the loop described above.
+  // TODO(ryan): implement the loop described above.
   return { outcome: 'error', summary: 'runBrowserAgent not implemented yet' };
 }

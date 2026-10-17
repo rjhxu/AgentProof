@@ -505,14 +505,13 @@ This is the signature moment: we are not merely announcing that the store is mor
 
 ## 11. Team Organization
 
-For a four-person team, assign work by subsystem.
+For a three-person team, assign work by subsystem. See [WORKPLAN.md](./WORKPLAN.md) for the hour-by-hour split.
 
-| Developer   | Primary responsibility                                | Owns                                                |
-| ----------- | ----------------------------------------------------- | --------------------------------------------------- |
-| Developer 1 | Next.js dashboard, visual design, replay UI           | `apps/web`                                          |
-| Developer 2 | Claude + Playwright browser agent                     | `packages/agent` (browser-agent, mission-generator) |
-| Developer 3 | Synthetic storefront, product data, cart verification | `apps/storefront`, `packages/verifier`, Gamma       |
-| Developer 4 | Orchestrator, diagnosis, code repair, integration     | `apps/runner`, `packages/diagnostics`               |
+| Developer | Primary responsibility                                                        | Owns                                                                                 |
+| --------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Zach      | Next.js dashboard, visual design, replay UI, demo video                       | `apps/web`                                                                           |
+| Ryan      | Claude + Playwright browser agents (Alpha, Beta), mission generator           | `packages/agent` (browser-agent, mission-generator, policy)                          |
+| Vihan     | Storefront, verification, Gamma, orchestrator, diagnosis, repair, integration | `apps/storefront`, `apps/runner`, `packages/verifier`, `packages/diagnostics`, Gamma |
 
 The shared mission and result schemas should be finalized at the beginning so developers can work independently. They live in `packages/shared`.
 

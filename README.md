@@ -10,6 +10,7 @@ Built for DubHacks 2026 (Visa Reimagine Shopping track).
 - How the code fits together: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Team conventions and ownership: [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)
 - Demo runbook: [docs/DEMO.md](docs/DEMO.md)
+- Who builds what, hour by hour: [docs/WORKPLAN.md](docs/WORKPLAN.md)
 
 ## Quick start
 
@@ -35,14 +36,14 @@ Verify the toolchain: `pnpm typecheck && pnpm test`. Verify the API key and brow
 
 ```
 apps/
-  web/          Next.js dashboard                         (Dev 1)
-  runner/       Fastify API, SQLite, job queue, SSE       (Dev 4)
-  storefront/   Synthetic store + structured catalog API  (Dev 3)
+  web/          Next.js dashboard                         (Zach)
+  runner/       Fastify API, SQLite, job queue, SSE       (Vihan)
+  storefront/   Synthetic store + structured catalog API  (Vihan)
 packages/
   shared/       Zod schemas, types, fixtures              (everyone, carefully)
-  agent/        Claude + Playwright agents, policy        (Dev 2)
-  verifier/     Deterministic checkpoint verification    (Dev 3)
-  diagnostics/  Root-cause analysis + repair diffs        (Dev 4)
+  agent/        Claude + Playwright agents, policy        (Ryan)
+  verifier/     Deterministic checkpoint verification    (Vihan)
+  diagnostics/  Root-cause analysis + repair diffs        (Vihan)
 data/
   artifacts/    Screenshots and traces per run (gitignored)
 docs/           Spec, architecture, contributing, demo

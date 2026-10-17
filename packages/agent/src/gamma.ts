@@ -1,6 +1,8 @@
-﻿import { z } from 'zod';
+import { z } from 'zod';
 import { ObservedCart, type Checkpoint, type Mission } from '@agentproof/shared';
 import { hostIsAllowed } from './policy';
+
+/** Gamma: deterministic catalog/cart inspector. OWNER: Vihan. */
 
 const Variant = z.object({
   id: z.string(),
