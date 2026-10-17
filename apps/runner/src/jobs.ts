@@ -11,7 +11,7 @@ import { publish } from './events';
  * Minimal async job manager: a FIFO queue with a concurrency cap.
  * Good enough for the hackathon; no Redis, no workers.
  *
- * OWNER: Developer 4.
+ * OWNER: Vihan.
  */
 const queue: string[] = [];
 let active = 0;
@@ -159,7 +159,7 @@ export async function executeRun(runId: string, missionOverride?: Mission): Prom
     }
 
     run = setStatus(run, 'verifying');
-    // TODO(dev2+dev3): collect ObservedCart from the store API using the session cookies,
+    // TODO(ryan+vihan): collect ObservedCart from the store API using the session cookies,
     // and productPage/checkoutReached from the step log, then pass them here.
     const verification = verify({ mission });
     for (const checkpoint of verification.checkpoints)

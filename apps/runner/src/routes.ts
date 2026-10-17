@@ -157,7 +157,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       return { issue };
     }
     const evidence = run.evidence.filter((e) => failure.evidenceIds.includes(e.id));
-    // TODO(dev4): pass repoFiles + sourceExcerpts from apps/storefront for better suspectedFiles.
+    // TODO(vihan): pass repoFiles + sourceExcerpts from apps/storefront for better suspectedFiles.
     const issue = await diagnose({ mission, run, checkpoint: failure, evidence });
     db.saveIssue(issue);
     return { issue };

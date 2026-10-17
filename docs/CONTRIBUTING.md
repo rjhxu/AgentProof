@@ -29,20 +29,21 @@ curl localhost:5000/api/catalog.json
 
 ## Ownership
 
-| Area                                               | Owner    | Touch freely                             | Ask first                                  |
-| -------------------------------------------------- | -------- | ---------------------------------------- | ------------------------------------------ |
-| `apps/web`                                         | Dev 1    | everything inside                        | –                                          |
-| `packages/agent`                                   | Dev 2    | browser-agent, mission-generator, policy | `claude.ts` (shared client)                |
-| `apps/storefront`, `packages/verifier`, `gamma.ts` | Dev 3    | everything inside                        | planted bug markers (demo depends on them) |
-| `apps/runner`, `packages/diagnostics`              | Dev 4    | everything inside                        | –                                          |
-| `packages/shared`                                  | everyone | add fields with defaults                 | renaming or removing anything              |
+| Area                                                                                      | Owner    | Touch freely                             | Ask first                                  |
+| ----------------------------------------------------------------------------------------- | -------- | ---------------------------------------- | ------------------------------------------ |
+| `apps/web`                                                                                | Zach     | everything inside                        | –                                          |
+| `packages/agent`                                                                          | Ryan     | browser-agent, mission-generator, policy | `claude.ts` (shared client)                |
+| `apps/storefront`, `apps/runner`, `packages/verifier`, `packages/diagnostics`, `gamma.ts` | Vihan    | everything inside                        | planted bug markers (demo depends on them) |
+| `packages/shared`                                                                         | everyone | add fields with defaults                 | renaming or removing anything              |
+
+Full task breakdown with hours and handoffs: [WORKPLAN.md](./WORKPLAN.md).
 
 Changing a schema in `packages/shared`? Post in the group chat first. Run `pnpm typecheck` to see who you broke.
 
 ## Git
 
 - `main` is always runnable. Never push a red `pnpm typecheck` to it.
-- Short-lived branches: `dev1/arena-ui`, `dev2/alpha-loop`, etc. Merge often (every 1–2 hours), small PRs or direct merges, no long-lived forks of `shared`.
+- Short-lived branches: `zach/arena-ui`, `ryan/alpha-loop`, `vihan/runner-verify`, etc. Merge often (every 1–2 hours), small PRs or direct merges, no long-lived forks of `shared`.
 - Commit messages: `area: what changed` (`runner: stream checkpoints over SSE`).
 - Never commit `.env`, `data/`, or screenshots. They are gitignored.
 
@@ -52,7 +53,8 @@ Changing a schema in `packages/shared`? Post in the group chat first. Run `pnpm 
 - Validate at the boundary: parse request bodies and Claude outputs with the Zod schemas; trust typed values after that.
 - Any Claude call goes through `getClaude()` from `@agentproof/agent` and uses `MODEL`. Use `messages.parse` + `zodOutputFormat` for anything that must come back as JSON.
 - Prettier formats on save; `pnpm format` before a merge if your editor did not.
-- Put TODOs as `// TODO(devN): ...` so they are greppable per owner.
+- Put TODOs as `// TODO(zach): ...`, `// TODO(ryan): ...`, `// TODO(vihan): ...` so they are greppable per owner.
+- `CLAUDE.md` is gitignored so each person can keep their own AI-assistant notes. If you want a shared one, ask before committing it.
 
 ## Demo safety rails
 

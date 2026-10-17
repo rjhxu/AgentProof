@@ -15,7 +15,7 @@ import {
  * Input is ONLY evidence the runner captured. Claude returns a hypothesis + category.
  * The `observed` field of the Issue is written by code from the checkpoint, never by Claude.
  *
- * OWNER: Developer 4.
+ * OWNER: Vihan.
  */
 
 const SYSTEM = `You are diagnosing why an automated shopping-agent test failed against an online store.
