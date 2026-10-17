@@ -5,9 +5,10 @@ import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
 import formbody from '@fastify/formbody';
 import fastifyStatic from '@fastify/static';
-import { addToCart, clearCart, getCart } from './cart';
+import { addToCart, clearCart, getCart, resolveVariantId } from './cart';
 import { findProductBySlug, findVariant, products } from './catalog';
-import { cartPage, catalogPage, checkoutPage, layout, productPage } from './views';
+import { imageUrl } from './html';
+import { cartPage, catalogPage, checkoutPage, errorPage, layout, productPage } from './views';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.STOREFRONT_PORT ?? 5000);
@@ -27,12 +28,13 @@ app.addHook('onRequest', async (req, reply) => {
   }
 });
 const sid = (req: { cookies: Record<string, string | undefined> }) => req.cookies[SESSION_COOKIE]!;
+/** Header badge: total units in the cart. */
+const cartCount = (req: { cookies: Record<string, string | undefined> }) =>
+  getCart(sid(req)).items.reduce((n, l) => n + l.quantity, 0);
 
 // ---- HTML pages -----------------------------------------------------------------
 app.get('/', async (req, reply) => {
-  reply
-    .type('text/html')
-    .send(layout('Shop', catalogPage(products), getCart(sid(req)).items.length));
+  reply.type('text/html').send(layout('Shop', catalogPage(products), cartCount(req)));
 });
 
 app.get<{ Params: { slug: string } }>('/products/:slug', async (req, reply) => {
@@ -42,14 +44,12 @@ app.get<{ Params: { slug: string } }>('/products/:slug', async (req, reply) => {
       .code(404)
       .type('text/html')
       .send(layout('Not found', '<h1>Product not found</h1>'));
-  reply
-    .type('text/html')
-    .send(layout(product.name, productPage(product), getCart(sid(req)).items.length));
+  reply.type('text/html').send(layout(product.name, productPage(product), cartCount(req)));
 });
 
 app.get('/cart', async (req, reply) => {
   const cart = getCart(sid(req));
-  reply.type('text/html').send(layout('Cart', cartPage(cart), cart.items.length));
+  reply.type('text/html').send(layout('Cart', cartPage(cart), cartCount(req)));
 });
 
 /**
@@ -62,19 +62,20 @@ app.post<{ Body: Record<string, string> }>('/cart/add', async (req, reply) => {
   const variant = product?.variants.find((v) =>
     Object.entries(v.attributes).every(([k, val]) => attrs[k] === val),
   );
+  const back = product ? `/products/${product.slug}` : '/';
   if (!product || !variant) {
     return reply
       .code(400)
       .type('text/html')
-      .send(layout('Error', '<h1>Could not add to cart</h1><p>Unknown variant.</p>'));
+      .send(layout('Error', errorPage('That combination of options does not exist.', back)));
   }
-  // Bypass resolveVariantId on purpose: pass the real id straight through.
+  // The real variant id goes straight in; only the API path below uses the legacy id map.
   const result = addToCart(sid(req), variant.id, Math.max(1, Number(quantity) || 1));
   if ('error' in result) {
     return reply
       .code(400)
       .type('text/html')
-      .send(layout('Error', `<h1>Could not add to cart</h1><p>${result.error}</p>`));
+      .send(layout('Error', errorPage(result.error, back)));
   }
   reply.redirect('/cart', 303);
 });
@@ -87,7 +88,7 @@ app.post('/cart/clear', async (req, reply) => {
 app.get('/checkout', async (req, reply) => {
   const cart = getCart(sid(req));
   if (cart.items.length === 0) return reply.redirect('/cart', 303);
-  reply.type('text/html').send(layout('Checkout', checkoutPage(cart), cart.items.length));
+  reply.type('text/html').send(layout('Checkout', checkoutPage(cart), cartCount(req)));
 });
 
 app.post('/checkout/place-order', async (_req, reply) => {
@@ -110,6 +111,7 @@ app.get('/api/catalog.json', async () => ({
     category: p.category,
     basePrice: p.basePrice,
     url: `/products/${p.slug}`,
+    image: imageUrl(p.slug),
     variants: p.variants,
   })),
 }));
@@ -126,7 +128,11 @@ app.get('/api/cart', async (req) => getCart(sid(req)));
 app.post<{ Body: { variantId?: string; quantity?: number } }>('/api/cart', async (req, reply) => {
   const { variantId, quantity = 1 } = req.body ?? {};
   if (!variantId) return reply.code(400).send({ error: 'variantId required' });
-  const result = addToCart(sid(req), variantId, Math.max(1, Number(quantity) || 1));
+  const result = addToCart(
+    sid(req),
+    resolveVariantId(variantId),
+    Math.max(1, Number(quantity) || 1),
+  );
   if ('error' in result) return reply.code(400).send(result);
   return result;
 });

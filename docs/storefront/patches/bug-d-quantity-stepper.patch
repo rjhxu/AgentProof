@@ -1,0 +1,36 @@
+--- a/apps/storefront/src/quantity-stepper.ts
++++ b/apps/storefront/src/quantity-stepper.ts
+@@ -1,24 +1,19 @@
+-const MINUS_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg>`;
+-const PLUS_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>`;
++const MINUS_ICON = `<svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg>`;
++const PLUS_ICON = `<svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>`;
+ 
+ /**
+  * Quantity control for the essentials template: "− 1 +".
+- *
+- * DEMO BUG D ("Icon-only quantity stepper").
+- * The two buttons contain only SVG icons, with no text, aria-label, or <title>, so they have no
+- * accessible name. The count is a plain <span>, and the value the form submits is a hidden input.
+- * Sighted shoppers see minus and plus signs and click. An agent reading the accessibility tree sees
+- * two nameless buttons next to the text "1" and no labelled field it can type into, so it cannot
+- * set a quantity and adds a single pair.
++ * The buttons are named for what they do, the icons are hidden from assistive tech, and the
++ * count is an <output> inside a group labelled "Quantity", announced when it changes.
+  */
+ export function quantityStepper(max = 10): string {
+   return `
+     <div class="option-row">
+-      <span class="option-label">Quantity</span>
+-      <div class="stepper" data-stepper data-max="${max}">
+-        <button type="button" class="stepper-btn" data-step="-1">${MINUS_ICON}</button>
+-        <span class="stepper-value" data-stepper-value>1</span>
+-        <button type="button" class="stepper-btn" data-step="1">${PLUS_ICON}</button>
++      <span class="option-label" id="qty-label">Quantity</span>
++      <div class="stepper" role="group" aria-labelledby="qty-label" data-stepper data-max="${max}">
++        <button type="button" class="stepper-btn" data-step="-1" aria-label="Decrease quantity">${MINUS_ICON}</button>
++        <output class="stepper-value" aria-live="polite" data-stepper-value>1</output>
++        <button type="button" class="stepper-btn" data-step="1" aria-label="Increase quantity">${PLUS_ICON}</button>
+         <input type="hidden" name="quantity" value="1">
+       </div>
+     </div>
