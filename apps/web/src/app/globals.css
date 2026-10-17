@@ -1,0 +1,20 @@
+@import 'tailwindcss';
+
+/* Mission-control palette. shadcn/ui init will append its tokens here. */
+:root {
+  --background: #0b0d12;
+  --foreground: #e6e8ee;
+  --muted: #8a90a2;
+  --panel: #12151d;
+  --line: #1f2430;
+  --accent: #4f8cff;
+  --pass: #2ecc71;
+  --fail: #ff5c5c;
+  --warn: #f4b942;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}

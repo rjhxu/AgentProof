@@ -1,0 +1,27 @@
+{
+  "name": "@agentproof/agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Claude + Playwright shopping agents (Alpha semantic, Beta vision) and the Gamma structured-data inspector.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run --passWithNoTests",
+    "smoke": "tsx src/smoke.ts"
+  },
+  "dependencies": {
+    "@agentproof/shared": "workspace:*",
+    "@anthropic-ai/sdk": "^0.135.0",
+    "playwright": "^1.64.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.5"
+  }
+}

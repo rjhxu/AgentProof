@@ -1,0 +1,25 @@
+{
+  "name": "@agentproof/diagnostics",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "AI root-cause analysis and reviewable repair generation. Separates observed facts from inferred causes.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@agentproof/agent": "workspace:*",
+    "@agentproof/shared": "workspace:*",
+    "@anthropic-ai/sdk": "^0.135.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.5"
+  }
+}
