@@ -29,12 +29,12 @@ curl localhost:5000/api/catalog.json
 
 ## Ownership
 
-| Area                                                                                      | Owner    | Touch freely                             | Ask first                                  |
-| ----------------------------------------------------------------------------------------- | -------- | ---------------------------------------- | ------------------------------------------ |
-| `apps/web`                                                                                | Zach     | everything inside                        | –                                          |
-| `packages/agent`                                                                          | Ryan     | browser-agent, mission-generator, policy | `claude.ts` (shared client)                |
-| `apps/storefront`, `apps/runner`, `packages/verifier`, `packages/diagnostics`, `gamma.ts` | Vihan    | everything inside                        | planted bug markers (demo depends on them) |
-| `packages/shared`                                                                         | everyone | add fields with defaults                 | renaming or removing anything              |
+| Area                                                                   | Owner    | Touch freely                                             | Ask first                                         |
+| ---------------------------------------------------------------------- | -------- | -------------------------------------------------------- | ------------------------------------------------- |
+| `packages/agent`, `apps/web`                                           | Zach     | browser-agent, prompts, targets, human replay, dashboard | `claude.ts` (shared client), `gamma.ts` (Vihan's) |
+| `apps/storefront`, `docs/storefront`                                   | Ryan     | everything inside                                        | planted bug markers (demo depends on them)        |
+| `apps/runner`, `packages/verifier`, `packages/diagnostics`, `gamma.ts` | Vihan    | everything inside                                        | –                                                 |
+| `packages/shared`                                                      | everyone | add fields with defaults                                 | renaming or removing anything                     |
 
 Full task breakdown with hours and handoffs: [WORKPLAN.md](./WORKPLAN.md).
 

@@ -159,7 +159,7 @@ export async function executeRun(runId: string, missionOverride?: Mission): Prom
     }
 
     run = setStatus(run, 'verifying');
-    // TODO(ryan+vihan): collect ObservedCart from the store API using the session cookies,
+    // TODO(zach+vihan): collect ObservedCart from the store API using the session cookies,
     // and productPage/checkoutReached from the step log, then pass them here.
     const verification = verify({ mission });
     for (const checkpoint of verification.checkpoints)
