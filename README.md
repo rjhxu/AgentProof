@@ -11,6 +11,8 @@ Built for DubHacks 2026 (Visa Reimagine Shopping track).
 - Team conventions and ownership: [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)
 - Demo runbook: [docs/DEMO.md](docs/DEMO.md)
 - Who builds what, hour by hour: [docs/WORKPLAN.md](docs/WORKPLAN.md)
+- Agent design and capabilities (Alpha, Beta, Gamma, Sigma): [docs/AGENTS.md](docs/AGENTS.md)
+- Agent implementation plan (not started): [docs/AGENTS-IMPLEMENTATION-PLAN.md](docs/AGENTS-IMPLEMENTATION-PLAN.md)
 
 ## Quick start
 
@@ -38,10 +40,10 @@ Verify the toolchain: `pnpm typecheck && pnpm test`. Verify the API key and brow
 apps/
   web/          Next.js dashboard                         (Zach)
   runner/       Fastify API, SQLite, job queue, SSE       (Vihan)
-  storefront/   Synthetic store + structured catalog API  (Vihan)
+  storefront/   Synthetic store + structured catalog API  (Ryan)
 packages/
   shared/       Zod schemas, types, fixtures              (everyone, carefully)
-  agent/        Claude + Playwright agents, policy        (Ryan)
+  agent/        Claude + Playwright agents, policy        (Zach)
   verifier/     Deterministic checkpoint verification    (Vihan)
   diagnostics/  Root-cause analysis + repair diffs        (Vihan)
 data/

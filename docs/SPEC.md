@@ -507,11 +507,11 @@ This is the signature moment: we are not merely announcing that the store is mor
 
 For a three-person team, assign work by subsystem. See [WORKPLAN.md](./WORKPLAN.md) for the hour-by-hour split.
 
-| Developer | Primary responsibility                                                        | Owns                                                                                 |
-| --------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| Zach      | Next.js dashboard, visual design, replay UI, demo video                       | `apps/web`                                                                           |
-| Ryan      | Claude + Playwright browser agents (Alpha, Beta), mission generator           | `packages/agent` (browser-agent, mission-generator, policy)                          |
-| Vihan     | Storefront, verification, Gamma, orchestrator, diagnosis, repair, integration | `apps/storefront`, `apps/runner`, `packages/verifier`, `packages/diagnostics`, Gamma |
+| Developer | Primary responsibility                                                                        | Owns                                                                                      |
+| --------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Zach      | Claude + Playwright browser agents (Alpha, Beta), human replay, Next.js dashboard, demo video | `packages/agent`, `apps/web`                                                              |
+| Ryan      | Synthetic storefront, planted bug scenarios, product data, answer key and patches             | `apps/storefront`, `docs/storefront`                                                      |
+| Vihan     | Orchestrator, verification, Gamma, diagnosis, repair, GitHub connection, integration          | `apps/runner`, `packages/verifier`, `packages/diagnostics`, `packages/agent/src/gamma.ts` |
 
 The shared mission and result schemas should be finalized at the beginning so developers can work independently. They live in `packages/shared`.
 
