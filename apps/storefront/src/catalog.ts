@@ -12,7 +12,7 @@
  *   studio-headphones           feature     DEMO BUG E (feature-layout.ts)
  *   canvas-tote                 simple      none (control scenario)
  *
- * OWNER: Vihan.
+ * OWNER: Ryan.
  */
 export interface Variant {
   id: string;
