@@ -6,6 +6,38 @@ Read first: [AGENTS.md](./AGENTS.md) (what the agents are), [storefront/bugs-and
 
 ---
 
+## 0. Execution update (2026-10-17, 16:30 PDT): implementation in progress on `abg-agents-impl`
+
+What changed since the plan below was written, and what is being built right now. The sections after this one are the original design; where they conflict, this section wins.
+
+**Provider: xAI Grok, not Anthropic.** The hackathon key is an xAI key (`GROK_API_KEY` in `.env`). All model calls go through a provider-neutral layer: types in `packages/agent/src/llm-types.ts`, adapters in `packages/agent/src/llm.ts` (xAI Responses API at `https://api.x.ai/v1/responses` with strict JSON-schema output, base64 image input, per-request cost from `usage.cost_in_usd_ticks`; Anthropic kept as a fallback adapter; a mock for tests). Nothing outside `llm.ts` touches a provider.
+
+**Models are tiered on purpose** (Zach's call, to embody the thesis that a store should work for the cheapest agent), with env overrides `AGENTPROOF_MODEL_<ALPHA|BETA|SIGMA|NARRATOR|MISSION>` and a global `AGENTPROOF_MODEL`:
+
+| Role                        | Default model                             | Effort | Why                                                                       |
+| --------------------------- | ----------------------------------------- | ------ | ------------------------------------------------------------------------- |
+| Alpha (semantic, text only) | `grok-4.3`                                | low    | The cheap path. If the store needs more than this, it is not agent-ready. |
+| Beta (vision)               | `grok-4.3`, screenshots at `detail: high` | medium | Same model, more expensive input (image tokens).                          |
+| Sigma (hybrid reference)    | `grok-4.7`                                | high   | The strongest agent, all senses. Shows what the ceiling costs.            |
+| Narrator (report prose)     | `grok-4.20-0309-non-reasoning`            | n/a    | Cheapest; no reasoning tokens.                                            |
+| Mission generator           | `grok-4.3`                                | low    | Structured extraction only.                                               |
+
+Every call records `LlmUsage` (tokens, image inputs, cost), summed per run and compared across agents in the mission report. That comparison is the thesis in numbers.
+
+**Reports are the hand-off to the code-fix agent.** Two schemas in `packages/shared/src/report.ts`: `AgentReport` (one per run: the agent's senses, the verifier's checkpoints, the step log with screenshot and snapshot paths, the failure point with what the agent perceived there, the agent's own narrative labelled as such, usage and cost) and `MissionReport` (one per mission: every agent side by side, a checkpoint × agent matrix, deterministic attribution per failed checkpoint, cost comparison, headline, recommendations). Both are written as `report.json` and `report.md` under `data/artifacts/`, served by the runner, and consumed later by the code-fix agent together with Vihan's repository connection.
+
+**Attribution is implemented** in `packages/verifier/src/attribute.ts` (deterministic; Sigma is the reference, Beta the fallback; a Sigma failure means the store is broken for every agent). Eight tests.
+
+**Decisions:** Stagehand was assessed and rejected for Sigma (v4 has no autonomous agent and no native Grok support), so Sigma is a branch of our own loop with all three senses. Human replay is deferred (Sigma is the reference; Ryan's grader already proves a mouse user succeeds). Gamma stays Vihan's deterministic implementation and gets a report like the others.
+
+**How the work is split (subagent waves, strict file ownership):**
+
+1. Wave 1 (parallel): `llm.ts` + `profiles.ts` + `mission-generator.ts` port; `targets.ts` + `prompts.ts` + `actions.ts`; `report.ts`. Each followed by an adversarial review and a fix pass.
+2. Wave 2 (parallel): the loop in `browser-agent.ts` for Alpha, Beta, and Sigma plus `narrative.ts` and the CLI (`pnpm --filter @agentproof/agent run -- --agent alpha --bug A`); runner wiring (`apps/runner`: browser-run branch with cart fetch via the session cookies, report generation, `GET /runs/:id/report`, `GET /missions/:id/report`, `GET /artifacts/*`, `POST /missions/fixture { bug }`).
+3. Wave 3: integration and live runs against the store for every agent on bug A, then adversarial review of safety, thesis alignment, and report usefulness; docs.
+
+**Left for later, by Zach's instruction:** a separate repo for the storefront, the code-fix agent, the final dashboard, the demo recording.
+
 ## 1. Decisions already made
 
 | Decision        | Choice                                                                                                                                                                                                                                                                                       | Why                                                                                                                                                                                                                           |
