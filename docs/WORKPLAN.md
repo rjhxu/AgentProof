@@ -36,7 +36,7 @@ Already done in the scaffold: shared schemas + fixtures, verifier with tests, st
 
 ## Ryan: browser agents + mission generator
 
-**Owns:** `packages/agent` (except `claude.ts`, which is shared). **Starts from:** `src/browser-agent.ts` (the `TODO(ryan)` markers), `src/policy.ts`, `src/mission-generator.ts`.
+**Owns:** `packages/agent` (except `claude.ts`, which is shared). **Starts from:** `src/browser-agent.ts` (the `TODO(ryan)` markers), `src/policy.ts`, `src/mission-generator.ts`. **Read first:** [AGENTS.md](./AGENTS.md) for the capability contracts and run anatomy.
 
 | Hours | Task                                                                                                                                                                                                                                                                                                                                                                                                               | Done when                                                                                                                                          |
 | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
