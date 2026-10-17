@@ -1,0 +1,28 @@
+--- a/apps/storefront/src/feature-layout.ts
++++ b/apps/storefront/src/feature-layout.ts
+@@ -4,13 +4,7 @@
+ /**
+  * Page template for featured hardware (audio): a large art stage with the buy box floating
+  * over it, followed by a spec table.
+- *
+- * DEMO BUG E ("Buy box inside an aria-hidden stage").
+- * The stage was marked aria-hidden="true" back when it only held decorative artwork. The buy box
+- * (price, options, Add to cart) was later moved inside it so it could sit on top of the art.
+- * aria-hidden removes the whole subtree from the accessibility tree but changes nothing on screen,
+- * so sighted shoppers can still see and click everything. An agent reading the tree finds the
+- * heading and the specs and no way to buy.
++ * Only the artwork is aria-hidden; the buy box stays in the accessibility tree.
+  */
+ export function featureLayout(product: Product, buyForm: string): string {
+   const specs = Object.entries(product.specs ?? {})
+@@ -23,8 +17,8 @@
+   <h1>${esc(product.name)}</h1>
+   <p class="lede">${esc(product.description)}</p>
+ </header>
+-<section class="feature-stage" aria-hidden="true">
+-  <div class="feature-art">${productImage(product.slug, '', { className: 'large', placeholder: product.name })}</div>
++<section class="feature-stage">
++  <div class="feature-art" aria-hidden="true">${productImage(product.slug, '', { className: 'large', placeholder: product.name })}</div>
+   <div class="feature-buy">${buyForm}</div>
+ </section>
+ <section class="feature-specs" aria-labelledby="specs-heading">

@@ -1,0 +1,51 @@
+--- a/apps/storefront/src/catalog.ts
++++ b/apps/storefront/src/catalog.ts
+@@ -33,8 +33,6 @@
+   basePrice: number;
+   template: ProductTemplate;
+   variants: Variant[];
+-  /** Display names for color swatches, by swatch position (apparel template). */
+-  swatchLabels?: string[];
+   /** Spec table rows (feature template). */
+   specs?: Record<string, string>;
+ }
+@@ -117,9 +115,6 @@
+         inStock: false,
+       },
+     ],
+-    // DEMO BUG C (data half). Copied from the spring merch sheet, which listed Forest first.
+-    // The swatches render in variant order (navy, forest, oatmeal), so the first two names are swapped.
+-    swatchLabels: ['Forest', 'Navy', 'Oatmeal'],
+   },
+   {
+     id: 'SOCK-001',
+--- a/apps/storefront/src/swatches.ts
++++ b/apps/storefront/src/swatches.ts
+@@ -14,23 +14,16 @@
+ 
+ /**
+  * Color picker for the apparel template: a row of round swatches, one radio input per color.
+- * No color is preselected; the shopper has to pick one.
+- *
+- * DEMO BUG C ("Mislabelled swatches").
+- * Each swatch's value and fill come from the variant data, but its accessible name comes from
+- * product.swatchLabels[i], a hand-maintained display-name list matched by position. The two lists
+- * are in different orders (see catalog.ts), so the navy swatch is announced as "Forest" and the
+- * forest swatch as "Navy". Sighted shoppers pick by color and never see the name. An agent that
+- * checks the radio named "Navy" gets the forest green sweatshirt.
++ * No color is preselected; the shopper has to pick one. Value, fill, and accessible name all
++ * come from the same variant color, so they cannot drift apart.
+  */
+ export function colorSwatches(product: Product): string {
+   const colors = attributeValues(product, 'color');
+-  const labels = product.swatchLabels ?? [];
+   const swatches = colors
+     .map(
+-      (color, i) => `
++      (color) => `
+         <label class="swatch" style="--swatch: ${SWATCH_HEX[color] ?? '#cccccc'}">
+-          <input type="radio" name="color" value="${esc(color)}" aria-label="${esc(labels[i] ?? titleCase(color))}" required>
++          <input type="radio" name="color" value="${esc(color)}" aria-label="${esc(titleCase(color))}" required>
+         </label>`,
+     )
+     .join('');

@@ -79,7 +79,18 @@ a {
   letter-spacing: 0.02em;
 }
 .thumb.large {
-  max-width: 420px;
+  max-width: 460px;
+  width: 100%;
+}
+img.thumb {
+  display: block;
+  width: 100%;
+  object-fit: cover;
+  background: #eee;
+}
+.thumb.placeholder span {
+  padding: 12px;
+  text-align: center;
 }
 .price {
   font-weight: 600;
@@ -117,7 +128,8 @@ a {
   margin: 14px 0;
 }
 .option-label {
-  width: 80px;
+  width: 100px;
+  flex-shrink: 0;
   color: var(--muted);
 }
 .size-picker {
@@ -136,6 +148,11 @@ a {
   border-color: var(--ink);
   background: var(--ink);
   color: #fff;
+}
+.chip.sold-out {
+  color: var(--muted);
+  text-decoration: line-through;
+  cursor: not-allowed;
 }
 select,
 input[type='number'] {
@@ -173,4 +190,205 @@ input[type='number'] {
   border-radius: 10px;
   padding: 16px 20px;
   margin-bottom: 16px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.breadcrumb {
+  font-size: 14px;
+  color: var(--muted);
+  margin-bottom: 16px;
+}
+.card-link {
+  display: block;
+}
+.card-meta {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0;
+}
+.description {
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+/* Accessible option groups (controls.ts): radios styled as chips */
+.option-group {
+  border: 0;
+  padding: 0;
+}
+.option-group legend {
+  float: left;
+  padding: 0;
+}
+.choices {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.choice {
+  position: relative;
+}
+.choice input {
+  position: absolute;
+  opacity: 0;
+  inset: 0;
+  margin: 0;
+  cursor: pointer;
+}
+.choice span {
+  display: inline-block;
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+}
+.choice input:checked + span {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: #fff;
+}
+.choice input:focus-visible + span {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.choice input:disabled {
+  cursor: not-allowed;
+}
+.choice input:disabled + span {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+.option-fixed {
+  font-weight: 500;
+}
+
+/* Color swatches (swatches.ts) */
+.swatches {
+  display: flex;
+  gap: 10px;
+}
+.swatch {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--swatch);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.15);
+  cursor: pointer;
+}
+.swatch input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  margin: 0;
+  cursor: pointer;
+}
+.swatch:has(input:checked) {
+  outline: 2px solid var(--ink);
+  outline-offset: 3px;
+}
+.swatch:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.swatch:has(input:disabled) {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* Quantity stepper (quantity-stepper.ts) */
+.stepper {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+}
+.stepper-btn {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  color: var(--ink);
+}
+.stepper-value {
+  min-width: 28px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Feature template (feature-layout.ts) */
+.eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0;
+}
+.feature-intro h1 {
+  font-size: 40px;
+  margin: 4px 0 8px;
+}
+.lede {
+  font-size: 18px;
+  color: var(--muted);
+  max-width: 560px;
+}
+.feature-stage {
+  position: relative;
+  margin: 24px 0;
+  padding: 32px;
+  border-radius: 16px;
+  background: radial-gradient(circle at 30% 40%, #3a3f55, #11131b);
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  gap: 32px;
+  align-items: center;
+}
+.feature-art .thumb {
+  max-width: none;
+  background: transparent;
+}
+.feature-buy {
+  background: rgba(255, 255, 255, 0.96);
+  border-radius: 12px;
+  padding: 20px 24px;
+}
+.feature-specs dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+.feature-specs dl div {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 16px;
+}
+.feature-specs dt {
+  color: var(--muted);
+  font-size: 13px;
+}
+.feature-specs dd {
+  margin: 4px 0 0;
+  font-weight: 600;
+}
+@media (max-width: 720px) {
+  .feature-stage {
+    grid-template-columns: 1fr;
+    padding: 16px;
+  }
 }
