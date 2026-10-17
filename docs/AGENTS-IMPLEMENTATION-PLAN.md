@@ -1,4 +1,4 @@
-# Implementation plan: Alpha, Beta, human replay, cross-agent attribution
+# Implementation plan: Alpha, Beta, Sigma, human replay, cross-agent attribution
 
 Status: **planned, not started.** Written 2026-10-17 after rebasing onto Ryan's storefront PR and reviewing Vihan's unmerged branch. Branch for this work: `abg-agents-impl`.
 
@@ -8,16 +8,17 @@ Read first: [AGENTS.md](./AGENTS.md) (what the agents are), [storefront/bugs-and
 
 ## 1. Decisions already made
 
-| Decision        | Choice                                                                                                                          | Why                                                                                                                   |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| Agent model     | Interface strategies (Alpha semantic, Beta vision, Gamma structured), not capability tiers                                      | Failures must map to a store property so a repair exists. Tiers attribute failure to the agent, not the store.        |
-| Human baseline  | A recorded mouse-driven Playwright session replayed deterministically (`human_replay`)                                          | Makes "works for humans" verified, not assumed. Beta remains the AI reference when no replay exists.                  |
-| Attribution     | Deterministic rule over the pass/fail pattern across agents picks the failure category before Claude writes the diagnosis       | Consistent categories across demo takes; Claude anchors on a code-derived prior.                                      |
-| Alpha targeting | Role + exact accessible name only (`page.getByRole(role, { name, exact: true })`). No text or CSS fallback.                     | Ryan's answer key: the Bug A snapshot still contains the text "S M L"; a text fallback lets Alpha click past the bug. |
-| Gamma           | Keep Vihan's implementation (`packages/agent/src/gamma.ts`)                                                                     | Already implemented with 5 tests on his branch.                                                                       |
-| Repairs         | Converge on `git apply` of a unified diff restricted to `apps/storefront/`                                                      | Ryan's five reference patches already use this; Vihan's string-replace for Bug B gets routed through the same path.   |
-| Ownership       | Zach: `packages/agent`, `apps/web`. Ryan: `apps/storefront`. Vihan: `apps/runner`, `packages/verifier`, `packages/diagnostics`. | Reflects who actually built what. Docs and `OWNER:` / `TODO(...)` markers to be updated.                              |
-| Vihan's branch  | Vihan rebases `vihan` onto `main` and opens PR #2                                                                               | His branch, his conflicts (5 files).                                                                                  |
+| Decision        | Choice                                                                                                                                                                                                                                                                                       | Why                                                                                                                                                                                                                           |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Agent model     | Interface strategies (Alpha semantic, Beta vision, Gamma structured), not capability tiers                                                                                                                                                                                                   | Failures must map to a store property so a repair exists. Tiers attribute failure to the agent, not the store.                                                                                                                |
+| Sigma           | A fourth AI agent, `sigma_hybrid`: the most capable human-like shopper. Sees the accessibility tree AND screenshots AND page text, may target by role or by coordinates, runs the strongest model at high effort. Models how real products (ChatGPT agent, Claude for Chrome) actually work. | Shows what a powerful agent achieves on the same store, so the gap between it and Alpha/Beta/Gamma is the bug. If Sigma fails, the store is broken for every agent (or the mission is infeasible), not just for one strategy. |
+| Human baseline  | A recorded mouse-driven Playwright session replayed deterministically (`human_replay`)                                                                                                                                                                                                       | Makes "works for humans" verified, not assumed. Sigma is the AI reference when no replay exists; Beta after that.                                                                                                             |
+| Attribution     | Deterministic rule over the pass/fail pattern across agents picks the failure category before Claude writes the diagnosis                                                                                                                                                                    | Consistent categories across demo takes; Claude anchors on a code-derived prior.                                                                                                                                              |
+| Alpha targeting | Role + exact accessible name only (`page.getByRole(role, { name, exact: true })`). No text or CSS fallback.                                                                                                                                                                                  | Ryan's answer key: the Bug A snapshot still contains the text "S M L"; a text fallback lets Alpha click past the bug.                                                                                                         |
+| Gamma           | Keep Vihan's implementation (`packages/agent/src/gamma.ts`)                                                                                                                                                                                                                                  | Already implemented with 5 tests on his branch.                                                                                                                                                                               |
+| Repairs         | Converge on `git apply` of a unified diff restricted to `apps/storefront/`                                                                                                                                                                                                                   | Ryan's five reference patches already use this; Vihan's string-replace for Bug B gets routed through the same path.                                                                                                           |
+| Ownership       | Zach: `packages/agent`, `apps/web`. Ryan: `apps/storefront`. Vihan: `apps/runner`, `packages/verifier`, `packages/diagnostics`.                                                                                                                                                              | Reflects who actually built what. Docs and `OWNER:` / `TODO(...)` markers to be updated.                                                                                                                                      |
+| Vihan's branch  | Vihan rebases `vihan` onto `main` and opens PR #2                                                                                                                                                                                                                                            | His branch, his conflicts (5 files).                                                                                                                                                                                          |
 
 ---
 
@@ -81,8 +82,13 @@ export const AgentKind = z.enum([
   'alpha_semantic',
   'beta_vision',
   'gamma_structured',
+  'sigma_hybrid',
   'human_replay',
 ]);
+AGENT_LABELS.sigma_hybrid = {
+  name: 'Agent Sigma',
+  strategy: 'Hybrid human-like agent (accessibility tree + screenshots + text, strongest model)',
+};
 AGENT_LABELS.human_replay = {
   name: 'Human Replay',
   strategy: 'Recorded human session, replayed deterministically',
@@ -162,6 +168,18 @@ Keep Vihan's. Follow-ups after his PR: use shared `attributeMatches`; optionally
 - `findReplay(mission)`: first entry whose `matches` is satisfied by the mission (product token match, attribute equality via `attributeMatches`, quantity if given). `undefined` ⇒ the runner marks the run `error` with "no human replay recorded for this mission".
 - `runHumanReplay(mission, artifactDir, cb)`: same session, screenshot per step, trace, and evidence capture as the agent loop. No Claude. Host allowlist still enforced via `hostIsAllowed`. Returns `BrowserAgentResult`.
 
+### 5.6 Sigma, the hybrid human-like agent (branches inside `browser-agent.ts`, ~40 lines)
+
+Sigma is the same loop as Alpha and Beta with the richest observation and the widest target vocabulary. It exists to show what the most capable agent achieves on the same store, so that the difference between its result and Alpha's, Beta's, or Gamma's is the bug.
+
+- **Observation** (`observe` branch for `sigma_hybrid`): the aria snapshot of `main` (as Alpha), a viewport screenshot (as Beta), the page text excerpt, and the URL and title. All three go in the user turn: image block first, then the tree, then the text.
+- **Targets** (`parseTarget` with `agent === 'sigma_hybrid'`): both grammars accepted, `role:name` and `x,y`. The system prompt tells Sigma to prefer `role:name` when the control is in the tree and to fall back to coordinates when it is not. That is exactly what a sighted, tool-using human does and what hybrid products do.
+- **Model and effort**: `MODEL` (`claude-opus-5-5` by default) with `output_config.effort: 'high'`. `maxSteps` may go to 40 for Sigma via `AgentConfig`; the mission's cap still applies through `checkAction`.
+- **Policy**: identical. Sigma gets no extra permissions, only more senses.
+- **Expected on the five scenarios**: passes A (sees the chips, clicks by coordinate), B is not its path (browser form bypasses the legacy map, so passes), C (picks the navy swatch by color, verifies on the cart page), D (clicks `+` by coordinate), E (sees the buy box). Passes the control. If Sigma fails a scenario, the store is broken for every agent or the mission is infeasible, and attribution says so (section 6.1).
+- **Cost**: the most expensive run per step (image plus tree). Cap the tree at ~6k characters and the history at 5 steps, as for the others.
+- `AgentConfig` gains an optional `effort` field (`'medium'` default, `'high'` for Sigma) so this is config, not a separate class.
+
 ---
 
 ## 6. Diagnostics (`packages/diagnostics/src`), owner Vihan
@@ -172,18 +190,20 @@ Keep Vihan's. Follow-ups after his PR: use shared `attributeMatches`; optionally
 export function attribute(checkpointId: CheckpointId, runs: Run[]): Attribution | undefined;
 ```
 
-Build `pattern` from each finished run's checkpoint status (`not_run` if that agent did not run or the checkpoint is absent). Reference = `human_replay` if present, else `beta_vision`. First matching row wins:
+Build `pattern` from each finished run's checkpoint status (`not_run` if that agent did not run or the checkpoint is absent). Two reference columns: **Human** = `human_replay` (the deterministic "a person can do this" check) and **Sigma** = `sigma_hybrid` (the most capable AI). When one of them did not run, the other stands in; when neither ran, `beta_vision` is the reference. First matching row wins (`any` includes not run):
 
-| Reference    | Alpha | Gamma           | Category                     | Reason text                                                   |
-| ------------ | ----- | --------------- | ---------------------------- | ------------------------------------------------------------- |
-| pass         | fail  | pass or not run | `semantic_interface_problem` | "{Reference} passed and Alpha failed on {checkpoint}"         |
-| pass         | pass  | fail            | `product_data_inconsistency` | "Browser agents passed; the structured path failed"           |
-| pass         | fail  | fail            | `cart_checkout_defect`       | "Every agent path failed while the human path passed"         |
-| fail         | fail  | any             | `cart_checkout_defect`       | "Nothing passed; the mission may be infeasible on this store" |
-| fail         | pass  | any             | `agent_execution_error`      | "The reference failed where the stricter agent passed"        |
-| only one run |       |                 | `undefined`                  | caller falls back to per-run diagnosis                        |
+| Human        | Sigma | Alpha | Gamma           | Category                     | Reason text                                                                                                                                                                |
+| ------------ | ----- | ----- | --------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| pass or n/a  | pass  | fail  | pass or not run | `semantic_interface_problem` | "Sigma passed and Alpha failed on {checkpoint}"                                                                                                                            |
+| pass or n/a  | pass  | pass  | fail            | `product_data_inconsistency` | "Browser agents passed; the structured path failed"                                                                                                                        |
+| pass or n/a  | pass  | fail  | fail            | `cart_checkout_defect`       | "Only the most capable agent passed; both narrower paths failed"                                                                                                           |
+| pass         | fail  | any   | any             | `cart_checkout_defect`       | "A human completed this mission but the most capable agent could not" (decision: Sigma failing means the store is broken for every agent, not a strategy-specific problem) |
+| fail         | fail  | any   | any             | `cart_checkout_defect`       | "Nothing passed, including the human replay; the mission may be infeasible on this store"                                                                                  |
+| n/a          | fail  | any   | any             | `cart_checkout_defect`       | "The most capable agent failed; record a human replay to tell a store defect from an infeasible mission"                                                                   |
+| any          | fail  | pass  | any             | `agent_execution_error`      | "Sigma failed where the stricter Alpha passed" (rare; usually a vision or coordinate mistake)                                                                              |
+| only one run |       |       |                 | `undefined`                  | caller falls back to per-run diagnosis                                                                                                                                     |
 
-Expected on the five scenarios: A, C, D, E ⇒ `semantic_interface_problem`; B ⇒ `product_data_inconsistency`.
+Expected on the five scenarios with Sigma present: A, C, D, E ⇒ `semantic_interface_problem`; B ⇒ `product_data_inconsistency`. Sigma is expected to pass all five; if it does not, the scenario itself needs looking at before anything else.
 
 ### 6.2 `diagnose.ts`
 
@@ -209,7 +229,7 @@ Expected on the five scenarios: A, C, D, E ⇒ `semantic_interface_problem`; B �
 
 ## 8. Dashboard (`apps/web`), owner Zach
 
-Keep Vihan's page as the baseline. Add: agent checkboxes (Alpha, Beta, Gamma, Human replay); one panel per run with status, latest screenshot (served from `/artifacts/`), and step list; the checkpoint table per run; an attribution line on the issue ("Human replay passed, Alpha failed on Correct size identified"); diff viewer and Apply; Rematch and the before/after table. Polling is fine; SSE later.
+Keep Vihan's page as the baseline. Add: agent checkboxes (Alpha, Beta, Sigma, Gamma, Human replay); one panel per run with status, latest screenshot (served from `/artifacts/`), and step list; the checkpoint table per run; an attribution line on the issue ("Human replay passed, Alpha failed on Correct size identified"); diff viewer and Apply; Rematch and the before/after table. Polling is fine; SSE later.
 
 ---
 
@@ -223,14 +243,15 @@ Keep Vihan's page as the baseline. Add: agent checkboxes (Alpha, Beta, Gamma, Hu
 
 ## 10. Tests
 
-| File                                         | Covers                                                                                                            |
-| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `packages/agent/src/targets.test.ts`         | Alpha grammar accepts `role:name`, rejects text/CSS; Beta parses `x,y`; ladder helper order                       |
-| `packages/agent/src/prompts.test.ts`         | Alpha user turn has a text block with the snapshot; Beta user turn has the image block first; history capped at 5 |
-| `packages/agent/src/human-replay.test.ts`    | `findReplay` picks the right scenario for each of the five missions and none for an unknown product               |
-| `packages/diagnostics/src/attribute.test.ts` | Every table row plus the five scenarios' expected patterns                                                        |
-| `packages/diagnostics/src/repair.test.ts`    | Apply and revert each reference patch in a temp worktree; refuses a diff touching `apps/runner`                   |
-| Existing                                     | shared fixtures (4), verifier (6), Vihan's gamma (5) and runner tests                                             |
+| File                                         | Covers                                                                                                                                             |
+| -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/agent/src/targets.test.ts`         | Alpha grammar accepts `role:name`, rejects text/CSS; Beta parses `x,y`; ladder helper order                                                        |
+| `packages/agent/src/prompts.test.ts`         | Alpha user turn has a text block with the snapshot; Beta user turn has the image block first; Sigma has image, tree, and text; history capped at 5 |
+| `packages/agent/src/targets.test.ts` (Sigma) | Sigma accepts both `role:name` and `x,y`; Alpha still rejects `x,y`                                                                                |
+| `packages/agent/src/human-replay.test.ts`    | `findReplay` picks the right scenario for each of the five missions and none for an unknown product                                                |
+| `packages/diagnostics/src/attribute.test.ts` | Every table row plus the five scenarios' expected patterns                                                                                         |
+| `packages/diagnostics/src/repair.test.ts`    | Apply and revert each reference patch in a temp worktree; refuses a diff touching `apps/runner`                                                    |
+| Existing                                     | shared fixtures (4), verifier (6), Vihan's gamma (5) and runner tests                                                                              |
 
 ---
 
@@ -241,12 +262,13 @@ Keep Vihan's page as the baseline. Add: agent checkboxes (Alpha, Beta, Gamma, Hu
 2. `targets.ts`, `prompts.ts`, tests.
 3. `decide()` and the loop for Alpha. Test against `--snapshot=black-hoodie` output pasted into a test before touching a browser.
 4. Beta branches in `observe` / `buildUserTurn` / `act`.
-5. `human-replay.ts`, `replays.ts`, test.
-6. `attribute.ts` + test; `diagnose.ts` prior; `applyRepair` via `git apply` + test; route Vihan's Gamma repair through it.
-7. Runner wiring: browser/replay cart fetch, fixture missions, artifacts route.
-8. Dashboard additions.
-9. Docs and ownership renames.
-10. `pnpm format && pnpm typecheck && pnpm test`, commit on `abg-agents-impl`, push, PR.
+5. Sigma branches (combined observation, dual target grammar, `effort: 'high'`). Run it on all five scenarios; it should pass all five.
+6. `human-replay.ts`, `replays.ts`, test.
+7. `attribute.ts` + test; `diagnose.ts` prior; `applyRepair` via `git apply` + test; route Vihan's Gamma repair through it.
+8. Runner wiring: browser/replay cart fetch, fixture missions, artifacts route.
+9. Dashboard additions.
+10. Docs and ownership renames.
+11. `pnpm format && pnpm typecheck && pnpm test`, commit on `abg-agents-impl`, push, PR.
 
 ---
 
@@ -262,9 +284,9 @@ Without an API key (anyone):
 
 With an API key (Zach):
 
-1. All four agent kinds on the hoodie mission ⇒ Alpha failed (cart S), Beta passed, Gamma failed, Human passed.
-2. `POST /runs/<alpha>/diagnose` ⇒ `issue.attribution.category === 'semantic_interface_problem'`.
-3. Repeat for missions C, D, E and confirm Alpha fails the checkpoint named in `bugs-and-fixes.md` for each.
+1. All five agent kinds on the hoodie mission ⇒ Alpha failed (cart S), Beta passed, Sigma passed, Gamma failed, Human passed.
+2. `POST /runs/<alpha>/diagnose` ⇒ `issue.attribution.category === 'semantic_interface_problem'` with reason "Sigma passed and Alpha failed on correct_size_identified".
+3. Repeat for missions C, D, E and confirm Alpha fails the checkpoint named in `bugs-and-fixes.md` for each, and Sigma passes every one.
 4. `PLAYWRIGHT_HEADED=1` for the video takes.
 
 Environment on Zach's machine as of writing: no `.env`, no Playwright browsers installed. Both are needed for steps marked "with an API key".

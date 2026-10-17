@@ -1,4 +1,4 @@
-# The shopping agents: Alpha, Beta, Gamma
+# The shopping agents: Alpha, Beta, Gamma, Sigma
 
 Background for whoever implements `packages/agent`. Read this before opening `browser-agent.ts` or `gamma.ts`.
 
@@ -6,19 +6,23 @@ Background for whoever implements `packages/agent`. Read this before opening `br
 
 The product claim is that a store can be "agent-ready" for one kind of AI shopper and broken for another. One agent cannot show that. Each of ours stands in for a real class of AI shopping client that exists today:
 
-| Agent                  | Stands in for                                                                                                                                               | How it sees the store                                                                                                                |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| **Alpha** (semantic)   | Agents built on the accessibility tree and DOM. Most production browser agents, and every screen reader, work this way.                                     | Roles, names, states: `button "Add to cart"`, `combobox "Size"`. Never pixels. If a control has no role or label, it does not exist. |
-| **Beta** (vision)      | Agents that take screenshots and reason visually, then click coordinates. Computer-use style agents.                                                        | What a human sees. Tolerates sloppy HTML, but slower, costlier, and can misread layout.                                              |
-| **Gamma** (structured) | Agents that never open a browser. They consume product feeds, catalog JSON, and cart or checkout APIs, which is where agent-commerce protocols are heading. | Machine-readable data only. Fast and precise, but only as correct as the merchant's data.                                            |
+| Agent                  | Stands in for                                                                                                                                                        | How it sees the store                                                                                                                     |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| **Alpha** (semantic)   | Agents built on the accessibility tree and DOM. Most production browser agents, and every screen reader, work this way.                                              | Roles, names, states: `button "Add to cart"`, `combobox "Size"`. Never pixels. If a control has no role or label, it does not exist.      |
+| **Beta** (vision)      | Agents that take screenshots and reason visually, then click coordinates. Computer-use style agents.                                                                 | What a human sees. Tolerates sloppy HTML, but slower, costlier, and can misread layout.                                                   |
+| **Gamma** (structured) | Agents that never open a browser. They consume product feeds, catalog JSON, and cart or checkout APIs, which is where agent-commerce protocols are heading.          | Machine-readable data only. Fast and precise, but only as correct as the merchant's data.                                                 |
+| **Sigma** (hybrid)     | The most capable, human-like shopper. Real products (ChatGPT agent, Claude for Chrome) are hybrids that use both the tree and screenshots, with the strongest model. | Everything: accessibility tree, screenshots, and page text. Targets by role when a control is in the tree, by coordinates when it is not. |
+
+Alpha, Beta, and Gamma each isolate one way an agent can perceive a store. Sigma is the reference: it shows what a powerful agent achieves on the same mission, so the gap between Sigma's result and the others' is the bug. A recorded human session (`human_replay`, no AI) sits beside Sigma as the deterministic "a person can do this" check.
 
 The demo store is built so each agent hits a different outcome on the same mission:
 
 - **Alpha fails** because the size picker is a row of unlabeled `<div>` chips (`DEMO BUG A`, `apps/storefront/src/views.ts`).
 - **Beta passes** because the chips look obvious on screen.
 - **Gamma fails** because the catalog says the medium variant is `HOODIE-001-M` but the cart API maps that id to small (`DEMO BUG B`, `apps/storefront/src/cart.ts`).
+- **Sigma passes** because it sees the chips in the screenshot, clicks one by coordinate when the tree has nothing to offer, and confirms the cart on the cart page.
 
-Three strategies, three verdicts, one store. Each agent's blind spot is hit exactly once.
+Three strategies, three verdicts, one reference, one store. Each narrow agent's blind spot is hit exactly once, and Sigma proves the mission was achievable. If Sigma ever fails, the store is broken for every agent, not for one strategy.
 
 ## 2. Capability contracts
 
@@ -60,7 +64,21 @@ Check an implementation against these tables.
 | **Expected on the demo store** | Selects `HOODIE-001-M` from the catalog. Cart returns `HOODIE-001-S`. Fails `catalog_variant_resolves`. Price check passes.                                                               |
 | **Evidence it produces**       | The catalog record it chose, the cart API request and response, and the page price it scraped, all as inline JSON evidence.                                                               |
 
-### Constraints shared by all three
+### Agent Sigma, hybrid human-like reference agent
+
+| Capability                     | Definition                                                                                                                                                                                                                                             |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Perceives**                  | Everything the others do: the accessibility tree of `main`, a viewport screenshot, the page text excerpt, URL and title. All in one observation.                                                                                                       |
+| **Identifies controls by**     | `role:name` when the control is in the tree, `x,y` coordinates when it is not. The prompt tells it to prefer semantics and fall back to pixels, like a sighted, tool-using person.                                                                     |
+| **Actions**                    | The full action set with both target grammars. Same policy as every other agent: allowed hosts, step cap, never a payment control.                                                                                                                     |
+| **Model**                      | The strongest configured model (`claude-opus-5-5` by default) at `effort: 'high'`. Up to 40 steps.                                                                                                                                                     |
+| **Can detect**                 | Whether the mission is achievable at all on this store. Mismatches between what the tree says and what the screen shows (it sees both). The true cart contents on the cart page.                                                                       |
+| **Cannot do**                  | Operate anything that needs a protocol or API the store does not expose through the UI. It is also the slowest and most expensive agent per step, so it is a reference run, not the thing you run on every commit.                                     |
+| **Expected on the demo store** | Passes all five scenarios and the control. A: clicks the "M" chip by coordinate. C: picks the navy swatch by color. D: clicks `+` twice by coordinate. E: sees the buy box in the screenshot. B does not apply (it uses the form, not the API).        |
+| **Evidence it produces**       | A screenshot and the aria snapshot per step, the action log with which grammar it used, so the diagnosis can say "the control was visible but not in the tree".                                                                                        |
+| **Role in attribution**        | If Sigma passes and a narrower agent fails, the failure is that agent's blind spot: semantic (Alpha) or data (Gamma). If Sigma fails, the store is broken for every agent or the mission is infeasible; the human replay, when present, decides which. |
+
+### Constraints shared by all four
 
 - They read the structured `Mission`, never the raw prompt.
 - Every action passes `checkAction()` (`packages/agent/src/policy.ts`) before execution: allowed action types, allowed hosts, step cap, never a payment control.
@@ -109,6 +127,8 @@ On the next decision Claude sees the failed select. A reasonable agent tries onc
 
 **Beta** is the same seven steps with two substitutions: the observation is a screenshot sent as an image block, and targets are coordinates clicked with `page.mouse.click(x, y)`. Beta sees the chips, clicks "M", and passes.
 
+**Sigma** is the same seven steps with the observation widened to image plus tree plus text, and `act` accepting either grammar. On the hoodie page it reads the tree, finds no size control, looks at the screenshot, clicks the "M" chip by coordinate, then uses `button:Add to cart` from the tree. On the cart page it reads "Size: M" and continues to checkout. It passes, and that pass is what makes Alpha's failure attributable to the store.
+
 **Gamma** has no loop. It is a short script: read the catalog, find the product and variant matching the mission, `POST /api/cart` with that variant id, read the cart back, compare what the catalog promised with what the cart delivered, and compare the catalog price to the product page price. Output is the same checkpoint format.
 
 ## 4. What has to be written
@@ -127,6 +147,14 @@ On the next decision Claude sees the failed select. A reasonable agent tries onc
 - An image content block in the decide prompt.
 - A coordinate branch in `act`: parse `x,y`, `page.mouse.click(x, y)`; for `type`, click then `page.keyboard.type`.
 
+### Sigma, about 40 more lines
+
+- A `sigma_hybrid` branch in `observe` that returns the tree, the screenshot, and the text together.
+- `buildUserTurn` emits the image block first, then the tree, then the text.
+- `parseTarget` accepts both grammars for Sigma; `act` already handles both.
+- `AgentConfig.effort` set to `'high'`, `maxSteps` up to 40.
+- Prompt line: prefer `role:name` when the control is in the tree; use `x,y` only when it is not.
+
 ### Gamma, in `packages/agent/src/gamma.ts`, no Claude call
 
 - Token-match the product name against the mission.
@@ -142,7 +170,8 @@ On the next decision Claude sees the failed select. A reasonable agent tries onc
 2. The loop.
 3. A real run against the store. Watch it fail on the size picker. That failure is correct.
 4. Beta.
-5. Gamma.
+5. Sigma. Run it on all five scenarios; it should pass all five, which validates the scenarios as much as the agent.
+6. Gamma (already implemented by Vihan; verify against the shared helpers).
 
 ### Things that bite
 

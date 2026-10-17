@@ -11,7 +11,7 @@ Built for DubHacks 2026 (Visa Reimagine Shopping track).
 - Team conventions and ownership: [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)
 - Demo runbook: [docs/DEMO.md](docs/DEMO.md)
 - Who builds what, hour by hour: [docs/WORKPLAN.md](docs/WORKPLAN.md)
-- Agent design and capabilities (Alpha, Beta, Gamma): [docs/AGENTS.md](docs/AGENTS.md)
+- Agent design and capabilities (Alpha, Beta, Gamma, Sigma): [docs/AGENTS.md](docs/AGENTS.md)
 - Agent implementation plan (not started): [docs/AGENTS-IMPLEMENTATION-PLAN.md](docs/AGENTS-IMPLEMENTATION-PLAN.md)
 
 ## Quick start
