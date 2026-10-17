@@ -21,10 +21,10 @@ const carts = new Map<string, CartLine[]>();
 
 /**
  * DEMO BUG B (spec example B, "The Incorrect Product Variant").
- * The cart service resolves variant ids through this legacy mapping before lookup.
- * The medium hoodie is mis-mapped to small. The product page never hits this path
- * because it posts the size label, not the variant id (see server.ts), so human
- * shoppers never notice. Agent Gamma does.
+ * The agent-facing cart API (POST /api/cart in server.ts) resolves variant ids through this
+ * legacy mapping before adding them. The medium hoodie is mis-mapped to small. The product
+ * page never hits this path because it posts option values and adds the real variant id
+ * directly, so human shoppers never notice. Agent Gamma does.
  *
  * The expected repair deletes this map (or fixes the M entry). Keep the marker comment
  * so the diagnostics package can locate it.
@@ -45,11 +45,11 @@ export function getCart(sessionId: string): Cart {
 
 export function addToCart(
   sessionId: string,
-  requestedVariantId: string,
+  variantId: string,
   quantity: number,
 ): Cart | { error: string } {
-  const resolved = findVariant(resolveVariantId(requestedVariantId));
-  if (!resolved) return { error: `Unknown variant ${requestedVariantId}` };
+  const resolved = findVariant(variantId);
+  if (!resolved) return { error: `Unknown variant ${variantId}` };
   if (!resolved.variant.inStock) return { error: `${resolved.variant.id} is out of stock` };
 
   const items = carts.get(sessionId) ?? [];
