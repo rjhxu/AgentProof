@@ -286,6 +286,9 @@ importers:
       '@agentproof/shared':
         specifier: workspace:*
         version: link:../shared
+      '@agentproof/verifier':
+        specifier: workspace:*
+        version: link:../verifier
       '@anthropic-ai/sdk':
         specifier: ^0.135.0
         version: 0.135.0(zod@4.6.7)
