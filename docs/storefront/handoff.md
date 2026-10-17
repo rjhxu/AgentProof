@@ -30,12 +30,14 @@ The demo must not fake a passing result by changing a status field, bypassing th
 ## 3. Intended architecture and responsibilities
 
 ### AgentProof dashboard
+
 - Create/select missions and start test runs.
 - Show run status, browser actions, screenshots, console/network errors when useful, and verifier results.
 - Show diagnosis, source references, proposed diff, approval control, patch outcome, and retest results.
 - Present a clear before/after comparison.
 
 ### Browser shopping agent
+
 - Uses Playwright to interact with the storefront through its user-facing UI.
 - Starts with a natural-language mission such as:
   > Find the black hoodie, size M, priced under $60, and add it to the cart.
@@ -44,6 +46,7 @@ The demo must not fake a passing result by changing a status field, bypassing th
 - Is restricted to the authorized demo storefront and allowed actions.
 
 ### Independent verifier
+
 - Converts mission requirements into explicit assertions.
 - Checks observable application state and, where possible, independently queries a trusted test interface or database/read-only state endpoint.
 - Verifies product identity, variant/size, price constraints, and cart contents.
@@ -51,12 +54,14 @@ The demo must not fake a passing result by changing a status field, bypassing th
 - Stores evidence and does not assume that a successful click means the mission succeeded.
 
 ### Diagnosis model
+
 - Receives the mission, browser trace, screenshots/DOM evidence, verifier output, and only the relevant source snippets.
 - Produces a concise explanation of the likely root cause and a proposed repair.
 - Must distinguish observed facts from hypotheses.
 - Does not have arbitrary shell access or unrestricted filesystem access.
 
 ### Patch engine
+
 - Produces a reviewable diff for the authorized storefront repo.
 - Restricts writes to the configured repository and allowed paths.
 - Validates the diff and rejects path traversal, unexpected files, and overly broad changes.
@@ -69,6 +74,7 @@ The demo must not fake a passing result by changing a status field, bypassing th
 Create a separate repository for the target app, provisionally named **`northstar-storefront`**. It should look like a small but credible merchant website rather than a generic test page.
 
 Keep it deliberately small:
+
 - A few products, including a black hoodie.
 - Product detail page with variant/size selection.
 - Price and availability display.
@@ -92,6 +98,7 @@ The current plan is **one storefront with three independently testable failure s
 **Potential repair:** Give controls clear accessible names and appropriate semantics; expose selection state with `aria-pressed`, a correctly implemented radio group, or another suitable pattern. The exact fix should match the component's implementation and semantics.
 
 **Verification:**
+
 - Before: the same mission reproducibly fails or cannot establish the selected size.
 - Patch: the source diff changes the actual control semantics.
 - After: the same browser agent can select size M, and the independent verifier confirms that the cart contains the black hoodie in size M.
@@ -107,6 +114,7 @@ The current plan is **one storefront with three independently testable failure s
 **Potential repair:** Correct the source of truth or data mapping so structured product information and rendered product information agree.
 
 **Verification:**
+
 - Compare rendered UI values with structured product data.
 - Have the agent complete a mission using the relevant product/variant.
 - Independently verify that the selected item, price, and cart contents meet the mission.
@@ -122,6 +130,7 @@ The current plan is **one storefront with three independently testable failure s
 **Potential repair:** Synchronize the cart update with the authoritative state and expose a meaningful completion signal, accessible status message, or reliable UI state.
 
 **Verification:**
+
 - Capture the initial state and the result of the add-to-cart action.
 - Wait for an explicit, meaningful completion condition rather than an arbitrary sleep.
 - Verify the final cart quantity and variant.
@@ -136,6 +145,7 @@ Suggested flagship mission:
 > Find the black hoodie, size M, priced under $60, and add exactly one to the cart.
 
 The verifier should evaluate at least:
+
 - Correct product.
 - Correct color.
 - Correct size/variant.
@@ -144,6 +154,7 @@ The verifier should evaluate at least:
 - The cart state is observed after the UI reports completion.
 
 Use stable product/variant IDs in the test fixture, for example:
+
 - `HOODIE-BLK-S`
 - `HOODIE-BLK-M`
 - `HOODIE-BLK-L`
@@ -153,6 +164,7 @@ These IDs are examples, not a requirement for a particular data model. The verif
 ## 7. Patch workflow and safety boundaries
 
 For the hackathon MVP:
+
 - Configure an explicit target-repository path.
 - Limit browser access to the demo storefront and approved routes.
 - Give the shopping agent browser access only; do not expose source-code tools to it.
@@ -186,6 +198,7 @@ A single fully working failure → diagnosis → patch → retest loop is more v
 ## 9. Demo UX / pitch priorities
 
 The demo should lead with the product behavior, not the architecture:
+
 - **Failure:** Show the mission and the agent's inability to interact reliably with the size selector.
 - **Evidence:** Show the exact failed action and verifier result.
 - **Diagnosis:** Explain the source-level cause in plain language.
@@ -197,6 +210,7 @@ The main differentiator is the closed loop: AgentProof does not merely observe a
 ## 10. MVP acceptance criteria
 
 The flagship demo is ready when all of these are true:
+
 - [ ] The storefront is a separate target app/repo.
 - [ ] Bug A fails reproducibly before repair.
 - [ ] The shopping agent interacts with the real UI using Playwright.

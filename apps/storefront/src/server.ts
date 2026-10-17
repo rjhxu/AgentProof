@@ -32,6 +32,8 @@ const sid = (req: { cookies: Record<string, string | undefined> }) => req.cookie
 const cartCount = (req: { cookies: Record<string, string | undefined> }) =>
   getCart(sid(req)).items.reduce((n, l) => n + l.quantity, 0);
 
+app.get('/health', async () => ({ ok: true, hoodieVariantId: resolveVariantId('HOODIE-001-M') }));
+
 // ---- HTML pages -----------------------------------------------------------------
 app.get('/', async (req, reply) => {
   reply.type('text/html').send(layout('Shop', catalogPage(products), cartCount(req)));

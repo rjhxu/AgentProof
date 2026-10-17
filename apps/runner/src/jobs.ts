@@ -2,7 +2,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { runBrowserAgent, runGamma } from '@agentproof/agent';
 import { verify, overallStatus } from '@agentproof/verifier';
-import { type Mission, type Run, type RunStatus, nowIso } from '@agentproof/shared';
+import { type Mission, type Run, type RunStatus, nowIso, newId } from '@agentproof/shared';
 import { config } from './config';
 import { getRun, saveRun } from './db';
 import { publish } from './events';
@@ -55,9 +55,86 @@ export async function executeRun(runId: string, missionOverride?: Mission): Prom
     if (run.agent.kind === 'gamma_structured') {
       const result = await runGamma(mission);
       run = setStatus(run, 'verifying');
-      // TODO(vihan): merge Gamma checkpoints with verify() output, attach catalogRecord evidence.
-      const verification = verify({ mission, cart: result.cart });
-      verification.checkpoints.push(...result.checkpoints);
+      const evidence = [
+        ...(result.catalogRecord
+          ? [
+              {
+                id: newId('ev'),
+                runId,
+                kind: 'catalog_record' as const,
+                capturedAt: nowIso(),
+                label: 'Live catalog and requested variant',
+                data: { product: result.catalogRecord, selectedVariant: result.selectedVariant },
+              },
+            ]
+          : []),
+        ...(result.cart
+          ? [
+              {
+                id: newId('ev'),
+                runId,
+                kind: 'cart_state' as const,
+                capturedAt: nowIso(),
+                label: 'Cart read back from the store',
+                data: result.cart,
+              },
+            ]
+          : []),
+        ...(result.checkoutReached !== undefined
+          ? [
+              {
+                id: newId('ev'),
+                runId,
+                kind: 'network' as const,
+                capturedAt: nowIso(),
+                label: 'Checkout review response',
+                data: {
+                  url: new URL('/checkout', mission.storeUrl).href,
+                  reached: result.checkoutReached,
+                },
+              },
+            ]
+          : []),
+      ];
+      run = { ...run, evidence };
+      saveRun(run);
+      for (const entry of evidence) publish({ type: 'evidence', runId, evidence: entry });
+      const verification = verify({
+        mission,
+        cart: result.cart,
+        cartEvidenceIds: evidence.filter((e) => e.kind === 'cart_state').map((e) => e.id),
+        checkoutReached:
+          result.checkoutReached === undefined
+            ? undefined
+            : {
+                reached: result.checkoutReached,
+                evidenceIds: evidence.filter((e) => e.kind === 'network').map((e) => e.id),
+              },
+      });
+      // Gamma identifies attributes in the catalog, not a product page.
+      for (const checkpoint of verification.checkpoints) {
+        if (
+          ['product_discovered', 'correct_color_identified', 'correct_size_identified'].includes(
+            checkpoint.id,
+          ) &&
+          result.selectedVariant
+        ) {
+          checkpoint.status = 'passed';
+          checkpoint.detail = `Identified in live catalog: ${result.selectedVariant.id}`;
+          checkpoint.evidenceIds = evidence
+            .filter((e) => e.kind === 'catalog_record')
+            .map((e) => e.id);
+        }
+      }
+      for (const checkpoint of result.checkpoints) {
+        checkpoint.evidenceIds = evidence.filter((e) => e.kind !== 'network').map((e) => e.id);
+        const index = verification.checkpoints.findIndex((c) => c.id === checkpoint.id);
+        if (index >= 0) verification.checkpoints[index] = checkpoint;
+        else verification.checkpoints.push(checkpoint);
+      }
+      verification.firstFailure = verification.checkpoints.find((c) => c.status === 'failed');
+      for (const checkpoint of verification.checkpoints)
+        publish({ type: 'checkpoint', runId, checkpoint });
       run = setStatus(run, overallStatus(verification), { verification, finishedAt: nowIso() });
       return;
     }

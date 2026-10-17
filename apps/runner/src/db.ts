@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
-import { Issue, Mission, Repair, Run } from '@agentproof/shared';
+import { Issue, Mission, Repair, Run, RepositoryConnection } from '@agentproof/shared';
 import { config } from './config';
 
 /**
@@ -32,6 +32,9 @@ export function getDb(): DatabaseSync {
     );
     CREATE TABLE IF NOT EXISTS repairs (
       id TEXT PRIMARY KEY, issue_id TEXT NOT NULL, status TEXT NOT NULL, json TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS repositories (
+      id TEXT PRIMARY KEY, run_id TEXT NOT NULL UNIQUE, json TEXT NOT NULL
     );
   `);
   return db;
@@ -109,4 +112,22 @@ export function listRepairsForRun(runId: string): Repair[] {
     .prepare('SELECT r.json FROM repairs r JOIN issues i ON i.id = r.issue_id WHERE i.run_id = ?')
     .all(runId) as { json: string }[];
   return rows.map((r) => Repair.parse(JSON.parse(r.json)));
+}
+
+// Tokens are omitted by the shared metadata schema before serialization.
+export function saveRepository(repository: RepositoryConnection): void {
+  const safe = RepositoryConnection.parse(repository);
+  getDb()
+    .prepare('INSERT INTO repositories (id, run_id, json) VALUES (?, ?, ?)')
+    .run(safe.id, safe.runId, JSON.stringify(safe));
+}
+
+export function getRepository(runId: string): RepositoryConnection | undefined {
+  const row = getDb().prepare('SELECT json FROM repositories WHERE run_id = ?').get(runId) as
+    { json: string } | undefined;
+  return row ? RepositoryConnection.parse(JSON.parse(row.json)) : undefined;
+}
+
+export function deleteRepository(runId: string): void {
+  getDb().prepare('DELETE FROM repositories WHERE run_id = ?').run(runId);
 }
