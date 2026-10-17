@@ -19,6 +19,7 @@ data/artifacts/*
 !data/artifacts/.gitkeep
 data/*.db
 data/*.db-*
+data/repositories/
 test-results/
 playwright-report/
 

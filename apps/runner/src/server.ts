@@ -4,9 +4,14 @@ import { config } from './config';
 import { getDb } from './db';
 import { registerRoutes } from './routes';
 
-const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info' } });
+const app = Fastify({
+  logger: {
+    level: process.env.LOG_LEVEL ?? 'info',
+    redact: ['req.headers.authorization', 'req.body.token', 'body.token', 'token'],
+  },
+});
 
-await app.register(cors, { origin: true });
+await app.register(cors, { origin: true, methods: ['GET', 'HEAD', 'POST', 'DELETE'] });
 getDb(); // create tables + data dirs on boot
 await registerRoutes(app);
 

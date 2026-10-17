@@ -6,3 +6,4 @@ export * from './run';
 export * from './issue';
 export * from './api';
 export * from './ids';
+export * from './repository';

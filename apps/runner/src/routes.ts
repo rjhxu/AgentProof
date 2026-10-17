@@ -13,12 +13,28 @@ import {
 import * as db from './db';
 import { subscribe } from './events';
 import { enqueue } from './jobs';
+import { hoodieMission } from '@agentproof/shared/fixtures';
+import { diagnoseGamma, proposeGammaRepair, applyGammaRepair } from './gamma-demo';
+import { registerRepositoryRoutes } from './repository-routes';
 
 /**
  * HTTP surface. Contract lives in packages/shared/src/api.ts; keep them in sync.
  */
 export async function registerRoutes(app: FastifyInstance): Promise<void> {
+  await registerRepositoryRoutes(app);
   app.get('/health', async () => ({ ok: true, at: nowIso() }));
+
+  // Fixed local mission: no model call or API key needed for the Gamma milestone.
+  app.post('/demo/hoodie', async () => {
+    const mission = {
+      ...hoodieMission,
+      id: newId('mis'),
+      createdAt: nowIso(),
+      storeUrl: `http://localhost:${Number(process.env.STOREFRONT_PORT ?? 5000)}`,
+    };
+    db.saveMission(mission);
+    return { mission };
+  });
 
   // ---- missions ---------------------------------------------------------------
   app.post('/missions', async (req, reply) => {
@@ -132,6 +148,14 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     if (!failure)
       return reply.code(400).send({ error: 'run has no failed checkpoint to diagnose' });
     const mission = db.getMission(run.missionId)!;
+    if (run.agent.kind === 'gamma_structured') {
+      const existing = db
+        .listIssues(run.id)
+        .find((issue) => issue.checkpointId === 'catalog_variant_resolves');
+      const issue = existing ?? diagnoseGamma(run);
+      db.saveIssue(issue);
+      return { issue };
+    }
     const evidence = run.evidence.filter((e) => failure.evidenceIds.includes(e.id));
     // TODO(vihan): pass repoFiles + sourceExcerpts from apps/storefront for better suspectedFiles.
     const issue = await diagnose({ mission, run, checkpoint: failure, evidence });
@@ -142,14 +166,48 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Params: { id: string } }>('/issues/:id/repair', async (req, reply) => {
     const issue = db.getIssue(req.params.id);
     if (!issue) return reply.code(404).send({ error: 'issue not found' });
-    // TODO(vihan): proposeRepair({ issue, sources }) then db.saveRepair
-    return reply.code(501).send({ error: 'repair proposal not implemented yet' });
+    if (db.getRun(issue.runId)?.agent.kind !== 'gamma_structured')
+      return reply.code(501).send({ error: 'Only the targeted Gamma repair is implemented.' });
+    try {
+      const repair = proposeGammaRepair(issue);
+      db.saveRepair(repair);
+      return { repair };
+    } catch (error) {
+      return reply.code(409).send({ error: String(error) });
+    }
   });
 
   app.post<{ Params: { id: string } }>('/repairs/:id/apply', async (req, reply) => {
     const repair = db.getRepair(req.params.id);
     if (!repair) return reply.code(404).send({ error: 'repair not found' });
-    // TODO(vihan): applyRepair(repair, config.storefrontDir) then db.saveRepair({...repair, status:'applied'})
-    return reply.code(501).send({ error: 'repair apply not implemented yet' });
+    const issue = db.getIssue(repair.issueId);
+    if (!issue || db.getRun(issue.runId)?.agent.kind !== 'gamma_structured')
+      return reply.code(400).send({ error: 'Unsupported repair.' });
+    try {
+      const applied = applyGammaRepair(repair, issue);
+      db.saveRepair(applied);
+      // Wait for tsx watch to load the reviewed source change before the rematch.
+      let storefrontReady = false;
+      const storeUrl = db.getMission(db.getRun(issue.runId)!.missionId)!.storeUrl;
+      for (let attempt = 0; attempt < 30; attempt++) {
+        try {
+          const response = await fetch(new URL('/health', storeUrl), {
+            redirect: 'error',
+            signal: AbortSignal.timeout(500),
+          });
+          const health = (await response.json()) as { hoodieVariantId?: string };
+          if (health.hoodieVariantId === 'HOODIE-001-M') {
+            storefrontReady = true;
+            break;
+          }
+        } catch {
+          /* Expected while the storefront restarts. */
+        }
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      return { repair: applied, storefrontReady };
+    } catch (error) {
+      return reply.code(409).send({ error: String(error) });
+    }
   });
 }
