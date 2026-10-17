@@ -1,6 +1,6 @@
 ﻿# Work plan: three developers, 24 hours
 
-Owners: **Zach** (browser agents + dashboard + demo), **Ryan** (storefront + bug scenarios), **Vihan** (runner, verification, Gamma, diagnosis, repair).
+Owners: **Zach** (browser agents Alpha/Beta/Sigma + dashboard + demo), **Ryan** (storefront + bug scenarios), **Vihan** (runner, verification, Gamma, diagnosis, repair).
 
 > Updated 2026-10-17 after PR #1 (Ryan's five-bug store) and PR #2 (Vihan's Gamma, repair, GitHub connection). The detailed agent work is in [AGENTS-IMPLEMENTATION-PLAN.md](./AGENTS-IMPLEMENTATION-PLAN.md); rows below marked **done** were delivered by those PRs.
 
@@ -36,7 +36,7 @@ Already done in the scaffold: shared schemas + fixtures, verifier with tests, st
 
 ---
 
-## Zach: browser agents + mission generator + human replay
+## Zach: browser agents (Alpha, Beta, Sigma) + mission generator + human replay
 
 **Owns:** `packages/agent` (except `claude.ts`, which is shared, and `gamma.ts`, which is Vihan's). **Starts from:** `src/browser-agent.ts` (the `TODO(zach)` markers), `src/policy.ts`, `src/mission-generator.ts`. **Read first:** [AGENTS.md](./AGENTS.md) and [AGENTS-IMPLEMENTATION-PLAN.md](./AGENTS-IMPLEMENTATION-PLAN.md) sections 4 and 5. Alpha targets are **role + exact accessible name only** (see [storefront/bugs-and-fixes.md](./storefront/bugs-and-fixes.md)).
 
