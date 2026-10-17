@@ -12,7 +12,7 @@ import type {
 
 /**
  * Typed client for the runner API. Contract: packages/shared/src/api.ts.
- * OWNER: Developer 1.
+ * OWNER: Zach.
  */
 const BASE = process.env.NEXT_PUBLIC_RUNNER_URL ?? 'http://localhost:4000';
 

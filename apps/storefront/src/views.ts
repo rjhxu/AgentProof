@@ -4,7 +4,7 @@ import type { Product } from './catalog';
 /**
  * Server-rendered HTML. Deliberately plain so Playwright behaviour is predictable.
  *
- * OWNER: Developer 3.
+ * OWNER: Vihan.
  */
 
 const esc = (s: string) =>

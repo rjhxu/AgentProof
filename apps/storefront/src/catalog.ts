@@ -2,7 +2,7 @@
  * Product data for the synthetic store "Northwind Threads".
  * This is the source of truth for the page, the structured feed, and the cart API.
  *
- * OWNER: Developer 3.
+ * OWNER: Vihan.
  */
 export interface Variant {
   id: string;

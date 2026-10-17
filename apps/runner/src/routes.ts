@@ -133,7 +133,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(400).send({ error: 'run has no failed checkpoint to diagnose' });
     const mission = db.getMission(run.missionId)!;
     const evidence = run.evidence.filter((e) => failure.evidenceIds.includes(e.id));
-    // TODO(dev4): pass repoFiles + sourceExcerpts from apps/storefront for better suspectedFiles.
+    // TODO(vihan): pass repoFiles + sourceExcerpts from apps/storefront for better suspectedFiles.
     const issue = await diagnose({ mission, run, checkpoint: failure, evidence });
     db.saveIssue(issue);
     return { issue };
@@ -142,14 +142,14 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Params: { id: string } }>('/issues/:id/repair', async (req, reply) => {
     const issue = db.getIssue(req.params.id);
     if (!issue) return reply.code(404).send({ error: 'issue not found' });
-    // TODO(dev4): proposeRepair({ issue, sources }) then db.saveRepair
+    // TODO(vihan): proposeRepair({ issue, sources }) then db.saveRepair
     return reply.code(501).send({ error: 'repair proposal not implemented yet' });
   });
 
   app.post<{ Params: { id: string } }>('/repairs/:id/apply', async (req, reply) => {
     const repair = db.getRepair(req.params.id);
     if (!repair) return reply.code(404).send({ error: 'repair not found' });
-    // TODO(dev4): applyRepair(repair, config.storefrontDir) then db.saveRepair({...repair, status:'applied'})
+    // TODO(vihan): applyRepair(repair, config.storefrontDir) then db.saveRepair({...repair, status:'applied'})
     return reply.code(501).send({ error: 'repair apply not implemented yet' });
   });
 }

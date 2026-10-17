@@ -8,7 +8,7 @@ import type { Checkpoint, Mission, ObservedCart } from '@agentproof/shared';
  * and checks whether the cart agrees with the catalog. This is how the "HOODIE-001-M resolves to
  * small" bug (spec example B) is caught.
  *
- * OWNER: Developer 3 (storefront + verification) or Developer 4 after the API is stable.
+ * OWNER: Vihan (Gamma reads the catalog + cart API he owns).
  */
 
 export interface CatalogVariant {
@@ -57,7 +57,7 @@ export async function runGamma(
   }
   const catalog = (await res.json()) as Catalog;
 
-  // TODO(dev3/dev4):
+  // TODO(vihan):
   // 1. pick the product whose name matches mission.requirements.product (simple token match)
   // 2. pick the variant whose attributes satisfy mission.requirements.attributes
   // 3. POST {storeUrl}/api/cart { variantId, quantity } and GET the cart back

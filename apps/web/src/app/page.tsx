@@ -3,7 +3,7 @@ import { alphaFailedRun, hoodieMission } from '@agentproof/shared/fixtures';
 
 /**
  * Placeholder home page. Renders fixture data so the schemas are visibly wired end to end.
- * OWNER: Developer 1. Replace with the mission form + arena.
+ * OWNER: Zach. Replace with the mission form + arena.
  */
 export default function Home() {
   const checkpoints = alphaFailedRun.verification?.checkpoints ?? [];
