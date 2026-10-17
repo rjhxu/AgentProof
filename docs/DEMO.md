@@ -23,7 +23,7 @@ The runner downloads a shallow source snapshot and shows its default branch, com
 
 **Disconnect repository** removes the local snapshot and connection metadata. Token revocation on GitHub is separate. These endpoints accept only local requests from the dashboard on `localhost:3000` or `127.0.0.1:3000`; this prototype has no hosted user accounts.
 
-This step connects source for future model-generated suggestions. Grok integration, generic repair generation, commits, and pushes are not implemented. The existing hoodie repair is still an independent bundled storefront demonstration.
+This step connects source for future model-generated suggestions. Generic repair generation, commits, and pushes are not implemented. The existing hoodie repair is still an independent bundled storefront demonstration.
 
 UI check: `pnpm demo:repository` uses live Gamma and connection lookup with fixture connection responses to exercise consent, token clearing, authentication errors/retry, connected metadata, disconnect, and mobile layout. `pnpm demo:repository:live` exercises the complete dashboard flow against the public `octocat/Hello-World` GitHub repository, including restoring the saved connection after a page reload and disconnecting. Backend tests separately exercise real Git cloning against a local fixture. No private token is needed for these tests.
 

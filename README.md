@@ -40,10 +40,10 @@ Verify the toolchain: `pnpm typecheck && pnpm test`. Verify the API key and brow
 apps/
   web/          Next.js dashboard                         (Zach)
   runner/       Fastify API, SQLite, job queue, SSE       (Vihan)
-  storefront/   Synthetic store + structured catalog API  (Vihan)
+  storefront/   Synthetic store + structured catalog API  (Ryan)
 packages/
   shared/       Zod schemas, types, fixtures              (everyone, carefully)
-  agent/        Claude + Playwright agents, policy        (Ryan)
+  agent/        Claude + Playwright agents, policy        (Zach)
   verifier/     Deterministic checkpoint verification    (Vihan)
   diagnostics/  Root-cause analysis + repair diffs        (Vihan)
 data/
