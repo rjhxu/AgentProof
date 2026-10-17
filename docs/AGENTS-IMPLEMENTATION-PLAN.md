@@ -52,7 +52,9 @@ Read first: [AGENTS.md](./AGENTS.md) (what the agents are), [storefront/bugs-and
 
 ## 3. Step 0: integrate Vihan's branch
 
-For Vihan:
+**Done.** Vihan merged `main` into his branch, resolved the five conflicts, formatted the handoff doc for CI, and merged PR #2 (`d03d8f2`) on 2026-10-17. `abg-agents-impl` has been rebased onto that merge. The original instructions are kept below for reference.
+
+For Vihan (historical):
 
 ```bash
 git fetch origin
