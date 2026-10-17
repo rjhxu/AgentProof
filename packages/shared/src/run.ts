@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { AgentAction, AgentConfig } from './agent';
 import { Checkpoint } from './checkpoint';
 import { Evidence, ObservedCart } from './evidence';
+import { LlmUsage } from './usage';
 
 export const RunStatus = z.enum([
   'queued',
@@ -22,10 +23,14 @@ export const RunStep = z.object({
   /** The action the agent proposed (already validated against policy) */
   action: AgentAction.optional(),
   /** What happened when the runner executed it */
-  outcome: z.enum(['ok', 'rejected_by_policy', 'error']).default('ok'),
+  outcome: z.enum(['ok', 'rejected_by_policy', 'error', 'invalid_action']).default('ok'),
   outcomeDetail: z.string().optional(),
   screenshotEvidenceId: z.string().optional(),
+  /** Accessibility snapshot captured for this step (Alpha, Sigma), as evidence */
+  snapshotEvidenceId: z.string().optional(),
   durationMs: z.number().int().nonnegative().optional(),
+  /** Model usage for the decide() call that produced this step */
+  usage: LlmUsage.optional(),
 });
 export type RunStep = z.infer<typeof RunStep>;
 
@@ -37,6 +42,14 @@ export const VerificationResult = z.object({
   verifiedAt: z.string(),
 });
 export type VerificationResult = z.infer<typeof VerificationResult>;
+
+/** What the agent itself claimed when it stopped. Never a verdict; the verifier decides. */
+export const AgentClaim = z.object({
+  outcome: z.enum(['done', 'fail', 'step_limit', 'error']),
+  summary: z.string(),
+  finalUrl: z.string().optional(),
+});
+export type AgentClaim = z.infer<typeof AgentClaim>;
 
 export const Run = z.object({
   id: z.string(),
@@ -53,6 +66,14 @@ export const Run = z.object({
   steps: z.array(RunStep).default([]),
   evidence: z.array(Evidence).default([]),
   verification: VerificationResult.optional(),
+  /** The agent's own stopping claim (done / fail / step_limit / error) */
+  claim: AgentClaim.optional(),
+  /** Model used after profile defaults and env overrides were applied */
+  resolvedModel: z.string().optional(),
+  /** Summed model usage for the whole run */
+  usage: LlmUsage.optional(),
+  /** Path of the generated report (JSON), relative to the artifacts dir */
+  reportPath: z.string().optional(),
   /** Set when status is "error" */
   errorMessage: z.string().optional(),
 });
@@ -65,5 +86,11 @@ export const RunEvent = z.discriminatedUnion('type', [
   z.object({ type: z.literal('evidence'), runId: z.string(), evidence: Evidence }),
   z.object({ type: z.literal('checkpoint'), runId: z.string(), checkpoint: Checkpoint }),
   z.object({ type: z.literal('log'), runId: z.string(), message: z.string(), at: z.string() }),
+  z.object({
+    type: z.literal('report'),
+    runId: z.string(),
+    reportPath: z.string(),
+    at: z.string(),
+  }),
 ]);
 export type RunEvent = z.infer<typeof RunEvent>;

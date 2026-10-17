@@ -90,7 +90,7 @@ describe('compareRuns', () => {
       },
     };
     const cmp = compareRuns(alphaFailedRun, rematch);
-    expect(cmp.improved).toBe(3); // two failed + one not_tested -> passed
+    expect(cmp.improved).toBe(2); // the two failed checkpoints -> passed; the rest were already passed
     expect(cmp.regressed).toBe(0);
   });
 });
