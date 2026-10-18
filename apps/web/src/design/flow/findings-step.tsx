@@ -33,7 +33,24 @@ export type FindingsStepProps = {
   onOpenConnect: () => void;
   onConnect: (request: ConnectRepositoryRequest) => void;
   onDownload: () => void;
+  /** Why the last connection attempt failed, under the form. */
+  connectError?: string;
+  /** The GitHub App is installed: no token field, the app reads the repository. */
+  tokenHidden?: boolean;
+  /** The repository is already connected and read: offer the fixes instead of the connect button. */
+  onContinueToFixes?: () => void;
 };
+
+type ConnectProps = Pick<
+  FindingsStepProps,
+  | 'connect'
+  | 'onOpenConnect'
+  | 'onConnect'
+  | 'onDownload'
+  | 'connectError'
+  | 'tokenHidden'
+  | 'onContinueToFixes'
+>;
 
 const LABEL = 'text-[11px] font-medium uppercase tracking-wide text-[var(--muted)]';
 const PRIMARY =
@@ -41,6 +58,9 @@ const PRIMARY =
 const ENTER = { opacity: 0, y: 8 };
 const SHOWN = { opacity: 1, y: 0 };
 const EXIT = { opacity: 0, y: -6, transition: { duration: 0.15 } };
+/** What connecting allows, in full: each fix is checked by rerunning the shopper on a patched copy. */
+const CONSENT =
+  'We may clone this repository to read it and run a patched copy of your store on this machine to check each fix. Nothing is written to your repository.';
 
 /** One revealed beat: rises in under the one before it, fades when the reader steps back. */
 function BeatBlock({ children }: { children: ReactNode }) {
@@ -278,9 +298,13 @@ function DownloadLink({ onClick }: { onClick: () => void }) {
 
 function ConnectForm({
   busy,
+  error,
+  tokenHidden = false,
   onSubmit,
 }: {
   busy: boolean;
+  error?: string;
+  tokenHidden?: boolean;
   onSubmit: (request: ConnectRepositoryRequest) => void;
 }) {
   const id = useId();
@@ -304,22 +328,28 @@ function ConnectForm({
         <input
           id={`${id}-url`}
           type="url"
+          autoComplete="url"
           placeholder="https://github.com/owner/repository"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           className="mt-1 h-11 w-full rounded-md border border-[var(--line-strong)] bg-[var(--background)] px-3 text-[15px] outline-none focus:border-[var(--accent)] focus:ring-4 focus:ring-[var(--accent-soft)]"
         />
       </label>
-      <label className="block text-sm" htmlFor={`${id}-token`}>
-        <span className="text-[var(--muted)]">Read-only token, only for private repositories</span>
-        <input
-          id={`${id}-token`}
-          ref={tokenRef}
-          type="password"
-          autoComplete="off"
-          className="mt-1 h-11 w-full rounded-md border border-[var(--line-strong)] bg-[var(--background)] px-3 text-[15px] outline-none focus:border-[var(--accent)] focus:ring-4 focus:ring-[var(--accent-soft)]"
-        />
-      </label>
+      {tokenHidden ? null : (
+        <label className="block text-sm" htmlFor={`${id}-token`}>
+          <span className="text-[var(--muted)]">
+            Read-only token, only for private repositories
+          </span>
+          <input
+            id={`${id}-token`}
+            ref={tokenRef}
+            type="password"
+            // A token is not a saved password: keep the browser from filling one in.
+            autoComplete="new-password"
+            className="mt-1 h-11 w-full rounded-md border border-[var(--line-strong)] bg-[var(--background)] px-3 text-[15px] outline-none focus:border-[var(--accent)] focus:ring-4 focus:ring-[var(--accent-soft)]"
+          />
+        </label>
+      )}
       <label className="flex items-start gap-2 text-sm">
         <input
           type="checkbox"
@@ -328,14 +358,18 @@ function ConnectForm({
           className="mt-1 h-4 w-4 accent-[var(--accent)]"
         />
         <span className="text-[var(--muted)]">
-          We may clone this repository to read it. Nothing is written to it, and a token is used
-          once and never stored.
+          {tokenHidden ? CONSENT : `${CONSENT} A token is used once and never stored.`}
         </span>
       </label>
       <button type="submit" disabled={!ready} className={PRIMARY}>
         {busy ? <SpinnerIcon /> : <BranchIcon />}
         {busy ? 'Connecting' : 'Connect and read the code'}
       </button>
+      {error ? (
+        <p role="alert" className="text-[13px] leading-snug text-[var(--fail)]">
+          {error}
+        </p>
+      ) : null}
     </form>
   );
 }
@@ -343,10 +377,13 @@ function ConnectForm({
 /** The one action of the step: connect the repository, or download the report instead. */
 function ConnectPanel({
   connect,
+  connectError,
+  tokenHidden,
   onOpenConnect,
   onConnect,
   onDownload,
-}: Pick<FindingsStepProps, 'connect' | 'onOpenConnect' | 'onConnect' | 'onDownload'>) {
+  onContinueToFixes,
+}: ConnectProps) {
   return (
     <section className="mt-8 rounded-lg border border-[var(--line)] bg-[var(--panel)] p-6 text-center">
       <h3 className="text-[18px] font-semibold">Get fixes for these problems</h3>
@@ -357,10 +394,28 @@ function ConnectPanel({
       <AnimatePresence mode="wait" initial={false}>
         {connect === 'closed' ? (
           <motion.div key="button" exit={{ opacity: 0 }} className="mt-5">
-            <button type="button" onClick={onOpenConnect} className={PRIMARY}>
-              <BranchIcon />
-              Connect GitHub
-            </button>
+            {onContinueToFixes ? (
+              <>
+                <button type="button" onClick={onContinueToFixes} className={PRIMARY}>
+                  See the fixes
+                  <ArrowRightIcon />
+                </button>
+                <p className="mt-3 text-sm">
+                  <button
+                    type="button"
+                    onClick={onOpenConnect}
+                    className="text-[var(--muted)] underline-offset-4 hover:underline"
+                  >
+                    Connect a different repository
+                  </button>
+                </p>
+              </>
+            ) : (
+              <button type="button" onClick={onOpenConnect} className={PRIMARY}>
+                <BranchIcon />
+                Connect GitHub
+              </button>
+            )}
           </motion.div>
         ) : (
           <motion.div
@@ -370,7 +425,12 @@ function ConnectPanel({
             transition={{ duration: 0.3, ease: 'easeOut' }}
             className="overflow-hidden"
           >
-            <ConnectForm busy={connect === 'submitting'} onSubmit={onConnect} />
+            <ConnectForm
+              busy={connect === 'submitting'}
+              error={connectError}
+              tokenHidden={tokenHidden}
+              onSubmit={onConnect}
+            />
           </motion.div>
         )}
       </AnimatePresence>
@@ -391,7 +451,7 @@ function Recap({
   cards: ProblemData[];
   thesis: string;
   onOpen: (problem: number) => void;
-} & Pick<FindingsStepProps, 'connect' | 'onOpenConnect' | 'onConnect' | 'onDownload'>) {
+} & ConnectProps) {
   return (
     <motion.section
       initial={ENTER}
@@ -602,6 +662,9 @@ export function FindingsStep(p: FindingsStepProps) {
               thesis={p.thesis}
               onOpen={(problem) => send({ type: 'GO_TO_PROBLEM', problem })}
               connect={p.connect}
+              connectError={p.connectError}
+              tokenHidden={p.tokenHidden}
+              onContinueToFixes={p.onContinueToFixes}
               onOpenConnect={p.onOpenConnect}
               onConnect={p.onConnect}
               onDownload={p.onDownload}

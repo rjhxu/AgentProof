@@ -212,7 +212,9 @@ export function buildProblems(
     if (attribution) card.attribution = attribution;
     if (screenshotUrl) card.screenshotUrl = screenshotUrl;
     if (run?.failurePoint) card.failingStep = run.failurePoint.stepIndex + 1;
-    if (run?.failurePoint?.perceived) card.excerpt = run.failurePoint.perceived;
+    // A vision shopper read no tree: its "screenshot only" placeholder is not an excerpt.
+    const perceived = run?.failurePoint?.perceived;
+    if (perceived && !perceived.startsWith('screenshot only')) card.excerpt = perceived;
     if (target) card.target = target;
     if (!screenshotUrl && observedCarts[issue.runId])
       card.observedCart = observedCarts[issue.runId];

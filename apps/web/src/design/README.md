@@ -4,10 +4,10 @@ This folder and the routes under `src/app/design/` exist to settle the dashboard
 
 ## Rules
 
-1. **Nothing here imports `src/lib/api.ts`, fetches, or opens an event stream.** Screens render fixtures only. Wiring happens later, outside this folder.
+1. **Nothing here imports `src/lib/api.ts`, fetches, or opens an event stream.** Screens render fixtures only. The wiring lives in `src/live/` and `src/app/page.tsx`, the only places that talk to the runner; `src/live` imports from this folder, never the reverse, and the sandbox at `/design/flow` stays fixture-only.
 2. **Components take props and nothing else.** Types come from `@agentproof/shared`. No module-level state, no environment variables.
 3. **Fixtures are recorded reports, not hand-written objects.** `fixtures/index.ts` parses each JSON with the shared Zod schema, so a backend schema change shows up at `pnpm typecheck` and `pnpm --filter @agentproof/web test`, not at wiring time. The two hand-written exceptions (the Gamma hypothesis text and the repository connection) are flagged in the index.
-4. **Do not touch `src/app/page.tsx`, `src/app/layout.tsx`, `src/components/`, or `src/lib/`** from this branch. The Gamma flow keeps working underneath until a designed screen replaces it.
+4. **Do not touch `src/app/layout.tsx`, `src/components/`, or `src/lib/`** from the sandbox. `src/app/page.tsx` is now the live flow (`src/live/live-flow.tsx`, fed by the runner) and the Gamma flow kept working at `/gamma`; a sandbox change reaches the live page only through the step components' props.
 5. **No new dependencies without a line in the decisions table** in `docs/DESIGN.md`.
 
 ## Layout
@@ -26,6 +26,9 @@ src/app/design/
   page.tsx           index of screens
   flow/page.tsx      the four-step flow (server boundary; the only importer of the fixtures)
   arena/ launch/ report/ issue/ rematch/   first-pass screens, superseded, kept for reference
+src/live/            NOT the sandbox: the live flow (live-flow.tsx), its runner hooks and the pure
+                     modules that map runner records onto the step components; src/app/page.tsx
+                     renders it, src/app/gamma/page.tsx keeps the Gamma flow
 ```
 
 ## Running it
