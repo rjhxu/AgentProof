@@ -17,6 +17,14 @@ export const CodeFixPreview = z.object({
 });
 export type CodeFixPreview = z.infer<typeof CodeFixPreview>;
 
+/**
+ * Progress of the reading beat on the Fixes step: files counted so far, the total, a label
+ * ("12 of 48 files") and the file under the cursor. The sandbox counts the fixture's files over
+ * a timer; the live page derives it from the code-fix records (src/live/codefix-view.ts defines
+ * the same shape, so neither side imports the other).
+ */
+export type ReadingProgress = { done: number; total: number; label: string; current?: string };
+
 /** The seven checks in the order the agent runs them. */
 export const CHECK_ORDER: readonly CodeFixCheckId[] = [
   'paths_in_scope',

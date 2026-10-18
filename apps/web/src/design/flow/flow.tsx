@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useReducer } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useState } from 'react';
 import { AnimatePresence, MotionConfig, motion } from 'motion/react';
 import type {
   AgentReport,
@@ -19,7 +19,7 @@ import { useReplay } from '../replay/use-replay';
 import { DevControls } from './dev-controls';
 import { buildProblems, orderProblems } from './findings-data';
 import { FindingsStep } from './findings-step';
-import type { CodeFixPreview } from './fixes-data';
+import type { CodeFixPreview, ReadingProgress } from './fixes-data';
 import { FixesStep } from './fixes-step';
 import { initialFlow, reduceFlow, stepIndex, type FlowStep } from './flow-machine';
 import { ScanStep } from './scan-step';
@@ -46,11 +46,19 @@ export type FlowProps = {
   initial: { step: FlowStep; speed: number; t: number | 'end' | null };
 };
 
+/*
+ * Sandbox beats. The live page (src/live/live-flow.tsx) replaces each with a runner call:
+ * deriving the mission, connecting the repository, reading the code, opening pull requests.
+ */
 const DERIVE_MS = 700;
+const CONNECT_MS = 600;
 const READ_MS = 2200;
+const OPEN_MS = 1600;
+
+type Opening = 'idle' | 'pending' | 'done';
 
 export function Flow(p: FlowProps) {
-  const [state, dispatch] = useReducer(reduceFlow, p.initial.step, initialFlow);
+  const [state, dispatch] = useReducer(reduceFlow, p.initial.step, (step) => initialFlow(step));
 
   const seeds = useMemo(() => p.runs.map((r) => ({ runId: r.runId, agent: r.agent })), [p.runs]);
   const startAtMs =
@@ -95,7 +103,7 @@ export function Flow(p: FlowProps) {
     [p.frames],
   );
 
-  // Sandbox beats. At wiring these become the mission endpoint and the repository read.
+  // Deriving the mission: the recorded hoodie mission after a short beat.
   useEffect(() => {
     if (state.step !== 'store' || state.phase !== 'deriving') return;
     const url = state.url.trim();
@@ -121,12 +129,68 @@ export function Flow(p: FlowProps) {
     window.scrollTo({ top: 0 });
   }, [state.step]);
 
+  // Connecting the repository: the fixture connection after a short beat.
   useEffect(() => {
-    if (state.step !== 'fixes' || state.phase !== 'reading') return;
-    const id = setTimeout(() => dispatch({ type: 'REPOSITORY_READ' }), READ_MS + 250);
+    if (state.step !== 'findings' || state.connect !== 'submitting') return;
+    const id = setTimeout(() => dispatch({ type: 'REPOSITORY_CONNECTED' }), CONNECT_MS);
     return () => clearTimeout(id);
   }, [state]);
 
+  // Reading the code: count through the fixture's files over READ_MS, then the cards.
+  const [readCount, setReadCount] = useState(0);
+  const fileTotal = Math.max(1, p.repository.fileCount);
+  useEffect(() => {
+    if (state.step !== 'fixes' || state.phase !== 'reading') return;
+    setReadCount(0);
+    const interval = Math.max(20, READ_MS / fileTotal);
+    const counter = setInterval(() => setReadCount((c) => Math.min(fileTotal, c + 1)), interval);
+    const done = setTimeout(() => dispatch({ type: 'REPOSITORY_READ' }), READ_MS + 250);
+    return () => {
+      clearInterval(counter);
+      clearTimeout(done);
+    };
+  }, [state, fileTotal]);
+  const reading: ReadingProgress | undefined =
+    state.step === 'fixes' && state.phase === 'reading'
+      ? (() => {
+          const file =
+            p.repository.files[Math.min(p.repository.files.length - 1, Math.max(0, readCount - 1))];
+          return {
+            done: readCount,
+            total: fileTotal,
+            label: `${readCount} of ${fileTotal} files`,
+            ...(file ? { current: file } : {}),
+          };
+        })()
+      : undefined;
+
+  // Opening draft pull requests: pending for a beat, then each fixture's `opened` delivery.
+  const [opening, setOpening] = useState<Opening>('idle');
+  useEffect(() => {
+    if (opening !== 'pending') return;
+    const id = setTimeout(() => setOpening('done'), OPEN_MS);
+    return () => clearTimeout(id);
+  }, [opening]);
+  useEffect(() => {
+    if (state.step !== 'fixes') setOpening('idle');
+  }, [state.step]);
+  const codefixes = useMemo(() => {
+    if (opening === 'idle') return p.codefixes;
+    return Object.fromEntries(
+      Object.entries(p.codefixes).map(([id, preview]) => [
+        id,
+        {
+          ...preview,
+          delivery:
+            opening === 'pending'
+              ? { mode: 'pull_request' as const, status: 'pending' as const }
+              : (preview.opened ?? preview.delivery),
+        },
+      ]),
+    );
+  }, [p.codefixes, opening]);
+
+  // The sandbox keeps today's screens: a jump back to the store is an empty store step.
   const jump = useCallback(
     (step: FlowStep) => {
       if (step === 'scan') replay.restart();
@@ -154,6 +218,7 @@ export function Flow(p: FlowProps) {
   const busy =
     (state.step === 'store' && state.phase === 'deriving') ||
     (state.step === 'scan' && state.phase === 'running') ||
+    (state.step === 'findings' && state.connect === 'submitting') ||
     (state.step === 'fixes' && state.phase === 'reading');
 
   return (
@@ -209,7 +274,7 @@ export function Flow(p: FlowProps) {
                 startAt={p.initial.step === 'findings' && p.initial.t === 'end' ? 'recap' : 'start'}
                 connect={state.connect}
                 onOpenConnect={() => dispatch({ type: 'CONNECT_OPENED' })}
-                onConnect={(request) => dispatch({ type: 'CONNECT_SUBMITTED', request })}
+                onConnect={() => dispatch({ type: 'CONNECT_SUBMITTED' })}
                 onDownload={download}
               />
             ) : (
@@ -217,8 +282,10 @@ export function Flow(p: FlowProps) {
                 repository={p.repository}
                 phase={state.phase}
                 fixes={problems}
-                codefixes={p.codefixes}
-                readMs={READ_MS}
+                codefixes={codefixes}
+                reading={reading}
+                opening={opening}
+                onOpen={() => setOpening('pending')}
               />
             )}
           </motion.section>

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { CHECKPOINT_LABELS } from '@agentproof/shared';
 
-import { missionABugged, problemsABugged, runsABugged } from '../fixtures';
+import { missionABugged, problemsABugged, runAlphaABugged, runsABugged } from '../fixtures';
 import { buildProblems, orderProblems } from './findings-data';
 
 const frames = { 'run_e2f6442a5419/step-001.png': '/design/alpha-a-step-01.png' };
@@ -89,6 +89,24 @@ describe("Gamma's problem", () => {
     expect(gamma!.excerpt).toBeUndefined();
     expect(gamma!.observedCart?.items[0]?.variantId).toBe('HOODIE-001-S');
     expect(gamma!.recommendation).toContain('cart API');
+  });
+});
+
+describe('the excerpt', () => {
+  it('is left out when the shopper read a screenshot only; the viewport stands alone', () => {
+    const point = runAlphaABugged.failurePoint!;
+    const blind = {
+      ...runAlphaABugged,
+      failurePoint: {
+        ...point,
+        perceived: `screenshot only (see screenshotPath ${point.screenshotPath})`,
+      },
+    };
+    const runs = runsABugged.map((r) => (r.runId === blind.runId ? blind : r));
+    const [card] = buildProblems(missionABugged, runs, problemsABugged, frames, carts);
+    expect(card!.excerpt).toBeUndefined();
+    expect(card!.screenshotUrl).toBe('/design/alpha-a-step-01.png');
+    expect(card!.target).toBe('Size');
   });
 });
 

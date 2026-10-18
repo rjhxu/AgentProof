@@ -13,7 +13,7 @@ export type LaneSeed = { runId: string; agent: AgentProfileSummary };
 
 /**
  * One agent's lane in the Scan step, folded from run events. The same reducer serves the
- * sandbox replay and, later, the live event stream, so the screen does not change at wiring.
+ * sandbox replay and the live event stream, so the screen does not change at wiring.
  */
 export type LaneState = {
   runId: string;
@@ -47,19 +47,43 @@ export function isTerminal(status: RunStatus): boolean {
   return status === 'passed' || status === 'failed' || status === 'error' || status === 'cancelled';
 }
 
+/**
+ * How far along a run's life a status is: queued, running, verifying, then any verdict. A lane
+ * never moves backwards, so a snapshot loaded over a live stream (or the stream repeating what
+ * the snapshot already held) cannot undo what the screen shows.
+ */
+export function statusRank(status: RunStatus): number {
+  switch (status) {
+    case 'queued':
+      return 0;
+    case 'running':
+      return 1;
+    case 'verifying':
+      return 2;
+    default:
+      return 3;
+  }
+}
+
 export function reduceLane(lane: LaneState, event: RunEvent): LaneState {
   if (event.runId !== lane.runId) return lane;
   switch (event.type) {
     case 'status': {
-      // An agent with no browser steps (Gamma) moves to the cart when it starts verifying.
+      // Never backwards; the same rank may repeat (a verdict can replace a verdict).
+      if (statusRank(event.status) < statusRank(lane.status)) return lane;
+      // The data check (Gamma) opens no page: it moves to the cart when it starts verifying. A
+      // browsing agent that stopped before its first step has no cart to move to and stays put.
       const stage =
-        lane.steps.length === 0 && (event.status === 'verifying' || isTerminal(event.status))
+        lane.agent.kind === 'gamma_structured' &&
+        (event.status === 'verifying' || isTerminal(event.status))
           ? 'cart'
           : lane.stage;
       return { ...lane, status: event.status, stage };
     }
     case 'step': {
       const step = event.step;
+      // A step already on the lane (the snapshot and the stream both carried it) counts once.
+      if (lane.steps.some((s) => s.index === step.index)) return lane;
       return {
         ...lane,
         steps: [...lane.steps, step],
@@ -68,8 +92,11 @@ export function reduceLane(lane: LaneState, event: RunEvent): LaneState {
       };
     }
     case 'evidence': {
-      const { kind, path } = event.evidence;
+      const { kind, path, stepIndex } = event.evidence;
       if (!path) return lane;
+      // A step's evidence arrives before the step. Once the step is on the lane its frame has
+      // been shown, so a repeat (the snapshot and the stream both carried it) must not rewind it.
+      if (stepIndex !== undefined && lane.steps.some((s) => s.index === stepIndex)) return lane;
       if (kind === 'screenshot') return { ...lane, latestScreenshotPath: path };
       if (kind === 'dom_snapshot') return { ...lane, latestSnapshotPath: path };
       return lane;

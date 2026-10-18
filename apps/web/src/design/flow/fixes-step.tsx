@@ -1,6 +1,5 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import type {
   CodeFixCheck,
@@ -21,6 +20,7 @@ import {
   deliveryLine,
   reviewLine,
   type CodeFixPreview,
+  type ReadingProgress,
 } from './fixes-data';
 import { BranchIcon, CheckIcon, CrossIcon, DownloadIcon, ExternalIcon, SpinnerIcon } from './icons';
 import { FixesMark } from './illustrations';
@@ -32,37 +32,52 @@ export type FixesStepProps = {
   fixes: Array<{ issue: Issue; repair: Repair }>;
   /** Issue id -> the checks, the second opinion and the delivery of its fix. */
   codefixes: Record<string, CodeFixPreview>;
-  /** How long the reading beat lasts; the counter runs over it. */
-  readMs: number;
+  /** How far the reading beat has got; undefined shows an indeterminate bar. */
+  reading?: ReadingProgress;
+  /** "Open draft pull requests": idle, in progress, or every requested one answered. */
+  opening: 'idle' | 'pending' | 'done';
+  onOpen: () => void;
+  /** Problems the agent could not propose a change for, listed quietly after the cards. */
+  failed?: Array<{ issue: Issue; error: string }>;
 };
 
-/** Sandbox beat: how long "open draft pull requests" takes. At wiring, the code-fix events. */
-const OPEN_MS = 1600;
+const PRIMARY =
+  'inline-flex h-11 items-center gap-2 rounded-md bg-[var(--accent)] px-5 text-[15px] font-medium text-[var(--accent-ink)] transition hover:opacity-90 disabled:opacity-60';
 
-function Reading({ repository, readMs }: { repository: RepositoryConnection; readMs: number }) {
-  const total = Math.max(1, repository.fileCount);
-  const [count, setCount] = useState(0);
-  useEffect(() => {
-    const interval = Math.max(20, readMs / total);
-    const id = setInterval(() => setCount((c) => Math.min(total, c + 1)), interval);
-    return () => clearInterval(id);
-  }, [readMs, total]);
-  const file = repository.files[Math.min(repository.files.length - 1, Math.max(0, count - 1))];
+function Reading({
+  repository,
+  reading,
+}: {
+  repository: RepositoryConnection;
+  reading?: ReadingProgress;
+}) {
+  const pct =
+    reading && reading.total > 0 ? Math.min(100, (reading.done / reading.total) * 100) : 0;
   return (
     <div className="mx-auto mt-8 max-w-[560px]">
       <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--panel-2)]">
-        <motion.div
-          className="h-full rounded-full bg-[var(--accent)]"
-          initial={{ width: '0%' }}
-          animate={{ width: `${(count / total) * 100}%` }}
-          transition={{ ease: 'linear', duration: 0.15 }}
-        />
+        {reading ? (
+          <motion.div
+            className="h-full rounded-full bg-[var(--accent)]"
+            initial={{ width: '0%' }}
+            animate={{ width: `${pct}%` }}
+            transition={{ ease: 'linear', duration: 0.15 }}
+          />
+        ) : (
+          <motion.div
+            className="h-full w-1/3 rounded-full bg-[var(--accent)]"
+            animate={{ x: ['-100%', '300%'] }}
+            transition={{ duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}
+          />
+        )}
       </div>
-      <p className="mt-3 flex items-baseline justify-between text-sm">
-        <span className="tabular-nums">
-          {count} of {total} files
+      <p className="mt-3 flex items-baseline justify-between gap-4 text-sm">
+        <span className="shrink-0 tabular-nums">
+          {reading ? reading.label : 'Reading your code'}
         </span>
-        <span className="truncate font-mono text-xs text-[var(--muted)]">{file ?? ''}</span>
+        <span className="truncate font-mono text-xs text-[var(--muted)]">
+          {reading?.current ?? ''}
+        </span>
       </p>
       <p className="mt-6 text-center text-sm text-[var(--muted)]">
         {repository.fullName} · {repository.defaultBranch} · {repository.commitSha.slice(0, 7)}
@@ -227,27 +242,19 @@ function FixCard({
  * Step 4: a short reading beat, then one card per problem with its checks, the second opinion
  * and its patch, and one action: open a draft pull request per fix. Merging stays with the
  * merchant; the patches are the fallback when the app is not installed on the repository.
+ * The reading progress and the opening state come from the caller: the sandbox beats them on a
+ * timer, the live page reads them off the code-fix records.
  */
 export function FixesStep(p: FixesStepProps) {
   const count = p.fixes.length;
+  const failed = p.failed ?? [];
   const canOpen = canOpenPullRequests(p.repository);
-  const [opening, setOpening] = useState<'idle' | 'pending' | 'done'>('idle');
+  const delivered = p.fixes.filter(
+    (f) => p.codefixes[f.issue.id]?.delivery.status === 'delivered',
+  ).length;
 
-  // Sandbox beat. At wiring: startCodeFix(runId, { mode: 'pull_request', consent: true })
-  // per failed run, then subscribeCodeFix until `done`; the record's delivery fills each card.
-  useEffect(() => {
-    if (opening !== 'pending') return;
-    const id = setTimeout(() => setOpening('done'), OPEN_MS);
-    return () => clearTimeout(id);
-  }, [opening]);
-
-  const deliveryFor = (issue: Issue): CodeFixDelivery => {
-    const preview = p.codefixes[issue.id];
-    if (!preview) return { mode: 'diff', status: 'not_requested' };
-    if (opening === 'done' && preview.opened) return preview.opened;
-    if (opening === 'pending') return { mode: 'pull_request', status: 'pending' };
-    return preview.delivery;
-  };
+  const deliveryFor = (issue: Issue): CodeFixDelivery =>
+    p.codefixes[issue.id]?.delivery ?? { mode: 'diff', status: 'not_requested' };
 
   const downloadPatches = () => {
     const text = p.fixes.map((f) => f.repair.diff.replace(/\n?$/, '\n')).join('\n');
@@ -267,17 +274,21 @@ export function FixesStep(p: FixesStepProps) {
         title={
           p.phase === 'reading'
             ? 'Reading your code'
-            : `${count} suggested change${count === 1 ? '' : 's'}`
+            : count === 0
+              ? 'No change proposed'
+              : `${count} suggested change${count === 1 ? '' : 's'}`
         }
         subtitle={
           p.phase === 'reading'
             ? `Looking through ${p.repository.fullName} for the code behind each problem.`
-            : 'Each change was applied, compiled and rerun against a patched copy of your store before you see it. Open it as a draft pull request, review, and merge when you are happy.'
+            : count === 0
+              ? `The agent read ${p.repository.fullName} but proposed no change it could validate.`
+              : 'Each change was applied, compiled and rerun against a patched copy of your store before you see it. Open it as a draft pull request, review, and merge when you are happy.'
         }
       />
 
       {p.phase === 'reading' ? (
-        <Reading repository={p.repository} readMs={p.readMs} />
+        <Reading repository={p.repository} reading={p.reading} />
       ) : (
         <motion.ol
           className="mt-8 space-y-4"
@@ -286,7 +297,7 @@ export function FixesStep(p: FixesStepProps) {
           variants={{ shown: { transition: { staggerChildren: 0.08 } } }}
         >
           {p.fixes.map((fix) => (
-            <li key={fix.repair.id}>
+            <li key={fix.issue.id}>
               <FixCard
                 issue={fix.issue}
                 repair={fix.repair}
@@ -298,7 +309,17 @@ export function FixesStep(p: FixesStepProps) {
         </motion.ol>
       )}
 
-      {p.phase === 'ready' ? (
+      {p.phase === 'ready' && failed.length > 0 ? (
+        <ul className="mx-auto mt-6 max-w-[640px] space-y-1 text-center text-sm text-[var(--muted)]">
+          {failed.map(({ issue, error }) => (
+            <li key={issue.id}>
+              No change proposed for {issue.title}: {error}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      {p.phase === 'ready' && count > 0 ? (
         <section className="mt-8 rounded-lg border border-[var(--line)] bg-[var(--panel)] p-6 text-center">
           <h3 className="text-[18px] font-semibold">Get these changes into your repository</h3>
           <p className="mx-auto mt-1 max-w-[520px] text-sm leading-relaxed text-[var(--muted)]">
@@ -307,38 +328,42 @@ export function FixesStep(p: FixesStepProps) {
               : `Opening pull requests needs the AgentProof GitHub App installed on ${p.repository.fullName}. Until then, download the patches and apply them yourself.`}
           </p>
           <AnimatePresence mode="wait" initial={false}>
-            {canOpen && opening === 'done' ? (
+            {canOpen && p.opening === 'done' ? (
               <motion.p
                 key="opened"
                 initial={{ opacity: 0, y: 6 }}
                 animate={{ opacity: 1, y: 0 }}
                 className="mt-5 inline-flex items-center gap-2 text-[15px] font-medium"
               >
-                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[var(--foreground)] text-[var(--background)]">
-                  <CheckIcon size={12} />
-                </span>
-                {count} draft pull request{count === 1 ? '' : 's'} opened
+                {delivered === 0 ? (
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[var(--fail)] text-white">
+                    <CrossIcon size={12} />
+                  </span>
+                ) : (
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[var(--foreground)] text-[var(--background)]">
+                    <CheckIcon size={12} />
+                  </span>
+                )}
+                {delivered === 0
+                  ? 'No draft pull request opened'
+                  : `${delivered} of ${count} draft pull request${count === 1 ? '' : 's'} opened`}
               </motion.p>
             ) : (
               <motion.div key="action" exit={{ opacity: 0 }} className="mt-5">
                 {canOpen ? (
                   <button
                     type="button"
-                    disabled={opening === 'pending'}
-                    onClick={() => setOpening('pending')}
-                    className="inline-flex h-11 items-center gap-2 rounded-md bg-[var(--accent)] px-5 text-[15px] font-medium text-[var(--accent-ink)] transition hover:opacity-90 disabled:opacity-60"
+                    disabled={p.opening === 'pending'}
+                    onClick={p.onOpen}
+                    className={PRIMARY}
                   >
-                    {opening === 'pending' ? <SpinnerIcon /> : <BranchIcon />}
-                    {opening === 'pending'
+                    {p.opening === 'pending' ? <SpinnerIcon /> : <BranchIcon />}
+                    {p.opening === 'pending'
                       ? 'Opening'
                       : `Open ${count} draft pull request${count === 1 ? '' : 's'}`}
                   </button>
                 ) : (
-                  <button
-                    type="button"
-                    onClick={downloadPatches}
-                    className="inline-flex h-11 items-center gap-2 rounded-md bg-[var(--accent)] px-5 text-[15px] font-medium text-[var(--accent-ink)] transition hover:opacity-90"
-                  >
+                  <button type="button" onClick={downloadPatches} className={PRIMARY}>
                     <DownloadIcon />
                     Download the patches
                   </button>
@@ -359,7 +384,7 @@ export function FixesStep(p: FixesStepProps) {
         </section>
       ) : null}
 
-      {p.phase === 'ready' ? (
+      {p.phase === 'ready' && count > 0 ? (
         <p className="mt-8 text-center text-sm text-[var(--muted)]">
           Review the pull requests, merge when you are happy, and scan again once you deploy.
         </p>
