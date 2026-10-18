@@ -119,7 +119,9 @@ async function finishRun(
     });
   }
   publish({ type: 'status', runId: run.id, status: verdict, at: nowIso() });
-  if (verdict !== 'error') {
+  // The mission report describes the original scan; a rematch (a rerun against a repaired store)
+  // is compared through compareRuns and must not replace the original agent's result in it.
+  if (verdict !== 'error' && run.label !== 'rematch') {
     try {
       await regenerateMissionReport(run.missionId);
     } catch (err) {

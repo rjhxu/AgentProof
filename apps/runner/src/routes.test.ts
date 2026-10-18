@@ -1,16 +1,17 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import Fastify from 'fastify';
 import {
+  AGENT_LABELS,
   AgentConfig,
   AgentReport,
   Mission,
   MissionReport,
+  Run,
   type LlmUsage,
   type ObservedCart,
-  type Run,
   type RunEvent,
 } from '@agentproof/shared';
 import { alphaFailedRun, hoodieMission } from '@agentproof/shared/fixtures';
@@ -78,6 +79,8 @@ vi.mock('@agentproof/agent', async (importOriginal) => {
     fetchCartWithCookies: vi.fn(async () => stubs.cart),
     // Real by default; the Gamma test scripts it so nothing touches the network.
     runGamma: vi.fn(actual.runGamma),
+    // Real: it reads the store feed through global fetch, which the POST /missions tests stub.
+    deriveMissionFromStore: actual.deriveMissionFromStore,
   };
 });
 
@@ -87,7 +90,7 @@ const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentproof-routes-'));
 process.env.AGENTPROOF_DATA_DIR = dataDir;
 const { config } = await import('./config');
 const db = await import('./db');
-const { registerErrorHandler, registerRoutes } = await import('./routes');
+const { isTerminalStatus, registerErrorHandler, registerRoutes } = await import('./routes');
 const { executeRun } = await import('./jobs');
 const { subscribe } = await import('./events');
 const { generateRunReport } = await import('./reports');
@@ -102,11 +105,11 @@ afterAll(() => {
   }
 });
 
-/** The app as server.ts assembles it: routes first, then the root error handler. */
+/** The app as server.ts assembles it: the root error handler first, then the routes. */
 async function server() {
   const app = Fastify();
-  await registerRoutes(app);
   registerErrorHandler(app);
+  await registerRoutes(app);
   return app;
 }
 
@@ -122,6 +125,23 @@ function withinMs<T>(promise: Promise<T>, ms: number, what: string): Promise<T> 
     timer = setTimeout(() => reject(new Error(`${what} did not finish within ${ms}ms`)), ms);
   });
   return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
+}
+
+/** Resolves with the run's terminal status: now if it has one, else when the queue publishes it. */
+function finished(runId: string): Promise<Run['status']> {
+  return new Promise((resolve) => {
+    const current = db.getRun(runId)?.status;
+    if (current && isTerminalStatus(current)) {
+      resolve(current);
+      return;
+    }
+    const unsubscribe = subscribe(runId, (event) => {
+      if (event.type === 'status' && isTerminalStatus(event.status)) {
+        unsubscribe();
+        resolve(event.status);
+      }
+    });
+  });
 }
 
 /** The SSE body as the JSON events it carried. */
@@ -218,6 +238,191 @@ describe('POST /missions/fixture', () => {
     const res = await app.inject({ method: 'POST', url: '/demo/hoodie' });
     expect(res.statusCode).toBe(200);
     expect(res.json().mission.storeUrl).toBe(config.storeUrl);
+    await app.close();
+  });
+});
+
+describe('POST /missions', () => {
+  // The Northwind feed as the store serves it, cut to the hoodie: what the stubbed fetch returns.
+  const catalog = {
+    store: 'Northwind Threads',
+    currency: 'USD',
+    products: [
+      {
+        id: 'HOODIE-001',
+        slug: 'black-hoodie',
+        name: 'Black Hoodie',
+        category: 'apparel',
+        basePrice: 49,
+        url: '/products/black-hoodie',
+        image: '/images/black-hoodie.jpeg',
+        variants: [
+          {
+            id: 'HOODIE-001-S',
+            attributes: { color: 'black', size: 'S' },
+            price: 49,
+            inStock: true,
+          },
+          {
+            id: 'HOODIE-001-M',
+            attributes: { color: 'black', size: 'M' },
+            price: 49,
+            inStock: true,
+          },
+          {
+            id: 'HOODIE-001-L',
+            attributes: { color: 'black', size: 'L' },
+            price: 49,
+            inStock: true,
+          },
+        ],
+      },
+    ],
+  };
+  type FetchArgs = [input: string | URL | Request, init?: RequestInit];
+  const neverFetch = () =>
+    vi.fn(async (..._args: FetchArgs): Promise<Response> => {
+      throw new Error('fetch must not be called');
+    });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  it('derives the mission from the store feed when no prompt is given, with no model call', async () => {
+    const fetchStub = vi.fn(async (..._args: FetchArgs) => Response.json(catalog));
+    vi.stubGlobal('fetch', fetchStub);
+    const app = await server();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/missions',
+      payload: { storeUrl: config.storeUrl },
+    });
+    expect(res.statusCode).toBe(200);
+    const mission = Mission.parse(res.json().mission);
+    expect(mission.storeUrl).toBe(config.storeUrl);
+    expect(mission.requirements.attributes.size).toBe('M');
+    expect(mission.rawPrompt).toContain('Black Hoodie');
+    expect(mission.paymentAuthorized).toBe(false);
+    expect(db.getMission(mission.id)?.rawPrompt).toBe(mission.rawPrompt);
+    expect(fetchStub).toHaveBeenCalledTimes(1);
+    expect(String(fetchStub.mock.calls[0]?.[0])).toBe(
+      `${new URL(config.storeUrl).origin}/api/catalog.json`,
+    );
+    await app.close();
+  });
+
+  it('answers 422 when the store publishes no readable feed', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (..._args: FetchArgs): Promise<Response> => {
+        throw new TypeError('fetch failed');
+      }),
+    );
+    const app = await server();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/missions',
+      payload: { storeUrl: config.storeUrl },
+    });
+    expect(res.statusCode).toBe(422);
+    expect(res.json().error).toContain('No product feed');
+    expect(res.json().error).toContain('/api/catalog.json');
+    await app.close();
+  });
+
+  it('refuses a store host outside the allowlist before any feed or model call, with or without a prompt', async () => {
+    vi.stubEnv('AGENTPROOF_ALLOWED_HOSTS', 'localhost,127.0.0.1');
+    const fetchStub = neverFetch();
+    vi.stubGlobal('fetch', fetchStub);
+    const app = await server();
+    for (const payload of [
+      { storeUrl: 'https://shop.example.com' },
+      { storeUrl: 'https://shop.example.com', prompt: 'Find a black hoodie in medium.' },
+    ]) {
+      const res = await app.inject({ method: 'POST', url: '/missions', payload });
+      expect(res.statusCode, JSON.stringify(payload)).toBe(400);
+      expect(res.json().error).toContain('allowed');
+      expect(res.json().error).toContain('localhost, 127.0.0.1');
+    }
+    expect(fetchStub).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('refuses a store address without an http(s) scheme', async () => {
+    const fetchStub = neverFetch();
+    vi.stubGlobal('fetch', fetchStub);
+    const app = await server();
+    for (const storeUrl of ['localhost:5000', 'ftp://localhost:5000']) {
+      const res = await app.inject({ method: 'POST', url: '/missions', payload: { storeUrl } });
+      expect(res.statusCode, storeUrl).toBe(400);
+      expect(res.json().error).toContain('http://');
+    }
+    expect(
+      (await app.inject({ method: 'POST', url: '/missions', payload: { storeUrl: 'not a url' } }))
+        .statusCode,
+    ).toBe(400);
+    expect(fetchStub).not.toHaveBeenCalled();
+    await app.close();
+  });
+});
+
+describe('POST /missions/:id/runs', () => {
+  it('labels every new run with its agent profile the moment it is created', async () => {
+    setLlmForTests(narrator());
+    // The queue starts the runs at once; Gamma is scripted so nothing touches the network.
+    vi.mocked(runGamma).mockImplementationOnce(async () => ({
+      checkpoints: [
+        {
+          id: 'product_discovered',
+          status: 'failed',
+          detail: 'No in-stock catalog variant satisfies the mission and budget.',
+          evidenceIds: [],
+        },
+      ],
+      notes: ['No cart mutation attempted.'],
+    }));
+    const app = await server();
+    const mission = Mission.parse(
+      (
+        await app.inject({ method: 'POST', url: '/missions/fixture', payload: { bug: 'control' } })
+      ).json().mission,
+    );
+    const kinds = ['alpha_semantic', 'beta_vision', 'gamma_structured', 'sigma_hybrid'] as const;
+    const res = await app.inject({
+      method: 'POST',
+      url: `/missions/${mission.id}/runs`,
+      payload: { agents: kinds },
+    });
+    expect(res.statusCode).toBe(200);
+    const runs = (res.json().runs as unknown[]).map((run) => Run.parse(run));
+    expect(runs.map((run) => run.agent.kind)).toEqual([...kinds]);
+    for (const run of runs) {
+      const summary = run.agentSummary;
+      expect(summary, run.agent.kind).toBeDefined();
+      expect(summary?.kind).toBe(run.agent.kind);
+      expect(summary?.name).toBe(AGENT_LABELS[run.agent.kind].name);
+      expect(summary?.model).toBeTruthy();
+      expect(summary?.provider).toBeTruthy();
+      expect(db.getRun(run.id)?.agentSummary).toEqual(summary);
+    }
+    const summaryOf = (kind: Run['agent']['kind']) =>
+      runs.find((run) => run.agent.kind === kind)?.agentSummary;
+    expect(summaryOf('gamma_structured')).toMatchObject({
+      model: 'none',
+      provider: 'none',
+      targetGrammars: [],
+    });
+    expect(summaryOf('alpha_semantic')).toMatchObject({
+      targetGrammars: ['role:name'],
+      effort: 'low',
+    });
+    expect(summaryOf('alpha_semantic')?.model).not.toBe('none');
+    expect(summaryOf('beta_vision')).toMatchObject({ targetGrammars: ['x,y'] });
+    expect(summaryOf('sigma_hybrid')).toMatchObject({ targetGrammars: ['role:name', 'x,y'] });
+    // Let the queued runs finish so nothing outlives this test.
+    await withinMs(Promise.all(runs.map((run) => finished(run.id))), 20_000, 'the four runs');
     await app.close();
   });
 });
@@ -330,10 +535,15 @@ describe('registerErrorHandler', () => {
     app.get('/boom', async () => {
       throw new Error('boom');
     });
+    // A provider's HTTP status rides on `status` (LlmError); it is not this runner's answer.
+    app.get('/upstream', async () => {
+      throw Object.assign(new Error('rate limited upstream'), { status: 429 });
+    });
     const teapot = await app.inject({ url: '/teapot' });
     expect(teapot.statusCode).toBe(418);
     expect(teapot.json()).toEqual({ error: 'short and stout' });
     expect((await app.inject({ url: '/boom' })).statusCode).toBe(500);
+    expect((await app.inject({ url: '/upstream' })).statusCode).toBe(500);
     await app.close();
   });
 });
