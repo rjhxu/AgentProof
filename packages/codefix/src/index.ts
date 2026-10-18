@@ -25,6 +25,8 @@ export * from './propose';
 export * from './edits';
 export * from './scope';
 export * from './toolchain';
+export * from './github';
+export * from './github-app';
 export * from './untrusted';
 export * from './content-policy';
 export * from './render';
