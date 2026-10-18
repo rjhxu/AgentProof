@@ -8,7 +8,9 @@
 >
 > **Target:** DubHacks 2026 — Visa Reimagine Shopping
 >
-> **Build constraints:** Four developers, 24 hours, one polished three-minute video.
+> **Build constraints:** Three developers, 24 hours, one polished three-minute video.
+>
+> **Status (2026-10-18):** this is the original spec from the start of the hackathon, kept for intent. The as-built state is in README.md, docs/ARCHITECTURE.md, docs/AGENTS.md and docs/RESULTS.md; where they differ from this document, the code and those docs win.
 
 ---
 

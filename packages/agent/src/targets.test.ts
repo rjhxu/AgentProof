@@ -8,6 +8,7 @@ import {
   describeTarget,
   describeTargetGrammar,
   parseTarget,
+  resolveRoleTarget,
   setQuantity,
   targetGrammars,
   targetShape,
@@ -297,6 +298,26 @@ describe('toLocator', () => {
     const { page, getByRole } = fakePage({});
     toLocator(page, { kind: 'role', role: 'button', name: 'Add to cart' });
     expect(getByRole).toHaveBeenCalledWith('button', { name: 'Add to cart', exact: true });
+  });
+});
+
+describe('resolveRoleTarget', () => {
+  const addToCart = { kind: 'role', role: 'button', name: 'Add to cart' } as const;
+
+  it('returns the role locator unchanged when the control is in the tree', async () => {
+    const button = fakeLocator(true);
+    const { page, getByRole } = fakePage({ 'button:Add to cart': button });
+    await expect(resolveRoleTarget(page, addToCart)).resolves.toBe(button);
+    expect(getByRole).toHaveBeenCalledWith('button', { name: 'Add to cart', exact: true });
+    expect(button.first).not.toHaveBeenCalled();
+    expect(button.click).not.toHaveBeenCalled();
+  });
+
+  it('throws at once when the control is not in the accessibility tree', async () => {
+    const { page } = fakePage({});
+    await expect(resolveRoleTarget(page, addToCart)).rejects.toThrow(
+      'no button "Add to cart" in the accessibility tree',
+    );
   });
 });
 

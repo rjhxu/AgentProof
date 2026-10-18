@@ -210,6 +210,22 @@ export function toLocator(page: Page, t: Extract<ParsedTarget, { kind: 'role' }>
   return page.getByRole(t.role as RoleArg, { name: t.name, exact: true });
 }
 
+/**
+ * toLocator() for an action, after checking the control is in the accessibility tree. An absent
+ * control fails at once with a readable message instead of Playwright's full action timeout. A
+ * present one is returned unchanged (no .first(): strict mode still rejects duplicates).
+ */
+export async function resolveRoleTarget(
+  page: Page,
+  t: Extract<ParsedTarget, { kind: 'role' }>,
+): Promise<Locator> {
+  const locator = toLocator(page, t);
+  if ((await locator.count()) === 0) {
+    throw new Error(`no ${t.role} "${t.name}" in the accessibility tree`);
+  }
+  return locator;
+}
+
 async function firstByRole(page: Page, role: AriaRole, name: string): Promise<Locator | null> {
   const loc = page.getByRole(role as RoleArg, { name, exact: true });
   return (await loc.count()) > 0 ? loc.first() : null;
