@@ -1,4 +1,4 @@
-import type { AgentKind, Mission, MissionReport, RunStep } from '@agentproof/shared';
+import type { AgentKind, CheckpointId, Mission, MissionReport, RunStep } from '@agentproof/shared';
 
 type Action = NonNullable<RunStep['action']>;
 
@@ -81,6 +81,54 @@ export function costLine(
   }
   return `${name(failing)} failed here at ${multiple(failed)} the cheapest shopper; ${passedText}.`;
 }
+
+/**
+ * "22× Alpha" for a shopper dearer than the cheapest one, from the report's relative cost;
+ * undefined for the cheapest shopper itself and for anything at or under its price.
+ * TODO(zach): finalCosts in flow/scan-step.tsx formats the same string; point it here once the
+ * Scan pass in flight has landed.
+ */
+export function relativeCostLabel(
+  rows: CostRow[],
+  kind: AgentKind,
+  names: Partial<Record<AgentKind, string>>,
+): string | undefined {
+  const cheapest = rows.find((r) => r.relativeCost === 1);
+  const row = rows.find((r) => r.agentKind === kind);
+  if (!cheapest || !row || row.agentKind === cheapest.agentKind) return undefined;
+  const m = row.relativeCost;
+  if (m === undefined || m <= 1) return undefined;
+  const times = m >= 10 ? `${Math.round(m)}` : m.toFixed(1);
+  return `${times}× ${shortName(names[cheapest.agentKind] ?? cheapest.agentKind)}`;
+}
+
+/**
+ * The recorded detail without its JSON parentheticals: "Requested HOODIE-001-M; cart returned
+ * HOODIE-001-S." TODO(zach): flow/scan-step.tsx keeps a private copy until its pass lands.
+ */
+export function plainDetail(detail: string | undefined): string | undefined {
+  return detail?.replace(/\s*\(\{[^)]*\}\)/g, '');
+}
+
+/** The shopper the others are measured against: every sense, the strongest model. */
+export const BENCHMARK_KIND: AgentKind = 'sigma_hybrid';
+
+/**
+ * Where a check happens for a shopper that never opens a page: in the catalog feed it reads or
+ * in the cart API it writes to. Browsing shoppers use the purchase-path stages instead.
+ */
+export const CHECKPOINT_WHERE: Record<CheckpointId, string> = {
+  product_discovered: 'Catalog feed',
+  correct_color_identified: 'Catalog feed',
+  correct_size_identified: 'Catalog feed',
+  added_to_cart: 'Cart API',
+  cart_matches_variant: 'Cart API',
+  cart_quantity_correct: 'Cart API',
+  price_within_budget: 'Cart API',
+  checkout_review_reached: 'Checkout',
+  catalog_variant_resolves: 'Cart API',
+  catalog_price_matches_page: 'Catalog feed',
+};
 
 export type ScanSummary = { completed: number; total: number; problems: number; short: string };
 

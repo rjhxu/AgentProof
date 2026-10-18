@@ -1,7 +1,21 @@
 import { describe, expect, it } from 'vitest';
 
-import { missionABugged, missionAFixed, runAlphaABugged, snapshotsABugged } from './fixtures';
-import { clickPoint, senses, stepReason, targetLine, thesisLine } from './format';
+import {
+  missionABugged,
+  missionAFixed,
+  runAlphaABugged,
+  runGammaABugged,
+  snapshotsABugged,
+} from './fixtures';
+import {
+  clickPoint,
+  plainDetail,
+  relativeCostLabel,
+  senses,
+  stepReason,
+  targetLine,
+  thesisLine,
+} from './format';
 
 describe('senses', () => {
   it('gives Sigma every sense and the strongest model, Gamma only the API', () => {
@@ -61,5 +75,31 @@ describe('thesisLine', () => {
 
   it('says the store works for the cheapest agent once Alpha passes', () => {
     expect(thesisLine(missionAFixed)).toMatch(/^Alpha, the cheapest shopper, bought it\./);
+  });
+});
+
+describe('relativeCostLabel', () => {
+  const rows = missionABugged.costComparison;
+  const names = Object.fromEntries(missionABugged.runs.map((r) => [r.agentKind, r.agentName]));
+
+  it('names the multiple over the cheapest shopper for anyone dearer', () => {
+    expect(relativeCostLabel(rows, 'sigma_hybrid', names)).toBe('22× Alpha');
+    expect(relativeCostLabel(rows, 'beta_vision', names)).toBe('1.1× Alpha');
+  });
+
+  it('says nothing for the cheapest shopper and for a shopper that cost nothing', () => {
+    expect(relativeCostLabel(rows, 'alpha_semantic', names)).toBeUndefined();
+    expect(relativeCostLabel(rows, 'gamma_structured', names)).toBeUndefined();
+  });
+});
+
+describe('plainDetail', () => {
+  it('drops the JSON parentheticals from a recorded detail and leaves the rest alone', () => {
+    const catalog = runGammaABugged.checkpoints.find((c) => c.id === 'catalog_variant_resolves');
+    expect(plainDetail(catalog?.detail)).toBe(
+      'Requested HOODIE-001-M; cart returned HOODIE-001-S.',
+    );
+    expect(plainDetail('Required size "M", observed "S"')).toBe('Required size "M", observed "S"');
+    expect(plainDetail(undefined)).toBeUndefined();
   });
 });
