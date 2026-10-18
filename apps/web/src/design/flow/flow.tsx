@@ -2,9 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useReducer } from 'react';
 import { AnimatePresence, MotionConfig, motion } from 'motion/react';
-import { CHECKPOINT_LABELS } from '@agentproof/shared';
 import type {
-  AgentKind,
   AgentReport,
   FailurePoint,
   Issue,
@@ -15,11 +13,12 @@ import type {
   RepositoryConnection,
 } from '@agentproof/shared';
 
-import { costLine, summarize, thesisLine } from '../format';
+import { summarize, thesisLine } from '../format';
 import type { ReplayEvent } from '../replay/script';
 import { useReplay } from '../replay/use-replay';
 import { DevControls } from './dev-controls';
-import { FindingsStep, type IssueCardData } from './findings-step';
+import { buildProblems, orderProblems } from './findings-data';
+import { FindingsStep } from './findings-step';
 import { FixesStep } from './fixes-step';
 import { initialFlow, reduceFlow, stepIndex, type FlowStep } from './flow-machine';
 import { ScanStep } from './scan-step';
@@ -46,62 +45,6 @@ export type FlowProps = {
 
 const DERIVE_MS = 700;
 const READ_MS = 2200;
-
-/** Words the report's deterministic recommendations use for each failure category. */
-const CATEGORY_WORDS: Partial<Record<Issue['category'], string[]>> = {
-  semantic_interface_problem: ['accessible name', 'role'],
-  product_data_inconsistency: ['catalog', 'cart api'],
-  cart_checkout_defect: ['cart', 'checkout'],
-};
-
-function buildCards(
-  report: MissionReport,
-  runs: AgentReport[],
-  problems: FlowProps['problems'],
-  frames: Record<string, string>,
-): IssueCardData[] {
-  const names = Object.fromEntries(report.runs.map((r) => [r.agentKind, r.agentName])) as Partial<
-    Record<AgentKind, string>
-  >;
-  return problems.map(({ issue }) => {
-    const run = runs.find((r) => r.runId === issue.runId);
-    const kind = run?.agent.kind;
-    const attribution =
-      report.attributions.find(
-        (a) => a.checkpointId === issue.checkpointId && a.category === issue.category,
-      ) ??
-      report.attributions.find(
-        (a) => a.category === issue.category && (kind ? a.failingAgents.includes(kind) : true),
-      );
-    const failingStep =
-      run?.failurePoint && run.steps.find((s) => s.index === run.failurePoint?.stepIndex);
-    const screenshotPath = run?.failurePoint?.screenshotPath ?? failingStep?.screenshotPath;
-    const rowId = attribution?.checkpointId ?? issue.checkpointId;
-    const row = report.matrix[rowId];
-    const affected = report.runs
-      .map((r) => ({
-        kind: r.agentKind,
-        name: r.agentName,
-        status: row?.[r.agentKind] ?? 'not_run',
-      }))
-      .filter((a) => a.status !== 'not_run');
-    const labels = [CHECKPOINT_LABELS[issue.checkpointId], CHECKPOINT_LABELS[rowId]];
-    // Two recommendations can name the same checkpoint; the category's own words break the tie.
-    const keywords = CATEGORY_WORDS[issue.category] ?? [];
-    const candidates = report.recommendations.filter((r) => labels.some((l) => r.includes(l)));
-    const recommendation =
-      candidates.find((r) => keywords.some((w) => r.toLowerCase().includes(w))) ?? candidates[0];
-    return {
-      issue,
-      attribution,
-      screenshotUrl: screenshotPath ? frames[screenshotPath] : undefined,
-      excerpt: run?.failurePoint?.perceived,
-      affected,
-      cost: kind ? costLine(report.costComparison, kind, names) : '',
-      recommendation,
-    };
-  });
-}
 
 export function Flow(p: FlowProps) {
   const [state, dispatch] = useReducer(reduceFlow, p.initial.step, initialFlow);
@@ -138,9 +81,11 @@ export function Flow(p: FlowProps) {
       ),
     [p.runs],
   );
+  // Problems in the order they broke the purchase path; Findings and Fixes share it.
+  const problems = useMemo(() => orderProblems(p.problems, p.runs), [p.problems, p.runs]);
   const cards = useMemo(
-    () => buildCards(p.report, p.runs, p.problems, p.frames),
-    [p.report, p.runs, p.problems, p.frames],
+    () => buildProblems(p.report, p.runs, problems, p.frames, p.observedCarts),
+    [p.report, p.runs, problems, p.frames, p.observedCarts],
   );
   const resolveArtifactUrl = useCallback(
     (path: string | undefined) => (path ? p.frames[path] : undefined),
@@ -256,7 +201,9 @@ export function Flow(p: FlowProps) {
             ) : state.step === 'findings' ? (
               <FindingsStep
                 summary={summary}
+                thesis={thesis}
                 cards={cards}
+                startAt={p.initial.step === 'findings' && p.initial.t === 'end' ? 'recap' : 'start'}
                 connect={state.connect}
                 onOpenConnect={() => dispatch({ type: 'CONNECT_OPENED' })}
                 onConnect={(request) => dispatch({ type: 'CONNECT_SUBMITTED', request })}
@@ -266,7 +213,7 @@ export function Flow(p: FlowProps) {
               <FixesStep
                 repository={p.repository}
                 phase={state.phase}
-                fixes={p.problems}
+                fixes={problems}
                 readMs={READ_MS}
               />
             )}
