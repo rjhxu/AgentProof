@@ -258,7 +258,7 @@ export function RepositoryConnectionPanel({
                 name="repositoryUrl"
                 required
                 placeholder="https://github.com/owner/repository"
-                autoComplete="off"
+                autoComplete="url"
                 spellCheck={false}
                 value={url}
                 onChange={(event) => setUrl(event.target.value)}
@@ -279,7 +279,8 @@ export function RepositoryConnectionPanel({
                 id={`${id}-token`}
                 type="password"
                 name="repositoryToken"
-                autoComplete="off"
+                // A token is not a saved password: keep the browser from filling one in.
+                autoComplete="new-password"
                 spellCheck={false}
                 aria-describedby={`${id}-token-help`}
                 className={input}

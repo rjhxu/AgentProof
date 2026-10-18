@@ -16,8 +16,7 @@ import type {
   FixtureMissionResponse,
   GetRunReportResponse,
   GetMissionReportResponse,
-  Mission,
-  Run,
+  GetMissionResponse,
   CodeFixEvent,
   CodeFixRequest,
   CodeFixResponse,
@@ -29,7 +28,9 @@ import type {
  * Typed client for the runner API. Contract: packages/shared/src/api.ts.
  * OWNER: Zach.
  */
-const BASE = process.env.NEXT_PUBLIC_RUNNER_URL ?? 'http://localhost:4000';
+/** Base URL of the runner API. Exported so a page can build its own event-stream URLs from it. */
+export const RUNNER_URL = process.env.NEXT_PUBLIC_RUNNER_URL ?? 'http://localhost:4000';
+const BASE = RUNNER_URL;
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
@@ -45,14 +46,6 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(body.error ?? `${res.status} ${res.statusText}`);
   }
   return (await res.json()) as T;
-}
-
-/** GET /missions/:id (no shared schema yet): the mission, its runs, and the mission report path once one exists. */
-export interface GetMissionResponse {
-  mission: Mission;
-  runs: Run[];
-  /** Artifacts-relative path of the cross-agent report JSON, e.g. "missions/mis_abc/report.json" */
-  missionReportPath?: string;
 }
 
 export const api = {
@@ -77,6 +70,11 @@ export const api = {
       body: JSON.stringify(body),
     }),
   getRun: (runId: string) => call<GetRunResponse>(`/runs/${runId}`),
+  /**
+   * text/event-stream of RunEvent for one run. The live page manages its own EventSource from
+   * this URL so it can reconnect; `subscribe` below is the fire-and-forget form.
+   */
+  runEventsUrl: (runId: string) => `${BASE}/runs/${runId}/events`,
   rematch: (runId: string) => call<RematchResponse>(`/runs/${runId}/rematch`, { method: 'POST' }),
   compare: (runId: string, otherId: string) =>
     call<CompareResponse>(`/runs/${runId}/compare/${otherId}`),
@@ -90,6 +88,7 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+  /** The mission, its runs (original and rematch), and the mission report path once one exists. */
   getMission: (missionId: string) => call<GetMissionResponse>(`/missions/${missionId}`),
   /**
    * 404 ("report not ready") while the run is in progress. jobs.ts saves the terminal status and
@@ -130,6 +129,11 @@ export const api = {
   /** text/markdown rendering of the record (the same text a pull request body gets). */
   codeFixMarkdownUrl: (codefixId: string) => `${BASE}/codefix/${codefixId}/report.md`,
   codeFixPatchUrl: (codefixId: string) => `${BASE}/codefix/${codefixId}/patch.diff`,
+  /**
+   * text/event-stream of CodeFixEvent for one fix. The live page manages its own EventSource
+   * from this URL so it can reconnect; `subscribeCodeFix` below is the fire-and-forget form.
+   */
+  codeFixEventsUrl: (codefixId: string) => `${BASE}/codefix/${codefixId}/events`,
   /** Whether the runner has a GitHub App identity, and where to install it; never the key. */
   getGitHubApp: () => call<GitHubAppStatusResponse>('/github/app'),
   /** The one-button registration page (opens in a new tab; GitHub returns to the runner). */
