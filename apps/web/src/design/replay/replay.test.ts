@@ -76,18 +76,20 @@ describe('sequential replay script', () => {
       (e) => e.event.type === 'status' && e.event.runId === runId && e.event.status === 'running',
     )!.at;
 
-  it('starts each shopper only after the previous one has reported', () => {
-    for (let i = 1; i < browsing.length; i++) {
-      expect(startAt(browsing[i]!.runId)).toBeGreaterThan(reportAt(browsing[i - 1]!.runId));
+  it('starts each agent, Gamma included, only after the previous one has reported', () => {
+    for (let i = 1; i < runsABugged.length; i++) {
+      expect(startAt(runsABugged[i]!.runId)).toBeGreaterThan(reportAt(runsABugged[i - 1]!.runId));
     }
-    expect(startAt(browsing[0]!.runId)).toBe(0);
+    expect(startAt(runsABugged[0]!.runId)).toBe(0);
   });
 
-  it('keeps Gamma on its own clock and finishes in well under half a minute', () => {
-    expect(startAt(gamma!.runId)).toBeLessThan(startAt(browsing[1]!.runId));
+  it('holds longer after a failure and finishes in well under half a minute', () => {
+    const alpha = runsABugged.find((r) => r.status === 'failed' && r.steps.length > 0)!;
+    const next = runsABugged[runsABugged.indexOf(alpha) + 1]!;
+    expect(startAt(next.runId) - reportAt(alpha.runId)).toBeGreaterThanOrEqual(2800);
     const total = scriptDurationMs(sequential);
     expect(total).toBeGreaterThan(10000);
-    expect(total).toBeLessThan(25000);
+    expect(total).toBeLessThan(30000);
   });
 });
 
