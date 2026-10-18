@@ -67,9 +67,62 @@ body:has([data-theme='light']) > header {
 }
 
 .flow-root {
+  --stepper-h: 53px;
   min-height: 100dvh;
   background: var(--background);
   color: var(--foreground);
+}
+
+/* The Scan step fills the viewport under the stepper and never scrolls. */
+.scan-root {
+  height: calc(100dvh - var(--stepper-h));
+  padding: 16px 0;
+}
+
+/* The stage sizes the perception box from its own height: 16:10, never wider than the column. */
+.stage-frame {
+  container-type: size;
+}
+
+.stage-box {
+  width: min(100%, 160cqh);
+  aspect-ratio: 16 / 10;
+}
+
+/* The box plus the 300px details column plus the gap, centred, so they sit together. */
+@media (min-width: 768px) {
+  .stage-grid {
+    max-width: calc(160cqh + 324px);
+    margin: 0 auto;
+  }
+}
+
+@media (max-height: 820px) {
+  .scan-root .scan-mark {
+    display: none;
+  }
+  .scan-root .scan-title {
+    font-size: 20px;
+  }
+  .scan-root .scan-reason {
+    -webkit-line-clamp: 2;
+  }
+}
+
+@media (max-height: 680px) {
+  .scan-root .scan-subtitle,
+  .scan-root .scan-reason,
+  .scan-root .scan-descriptor,
+  .scan-root .scan-status {
+    display: none;
+  }
+  .scan-root .scan-action {
+    margin-top: 8px;
+    font-size: 17px;
+  }
+  .scan-root {
+    padding: 10px 0;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,0 +1,142 @@
+{
+  "iss_a1b2c3d4e5f6": {
+    "checks": [
+      {
+        "id": "paths_in_scope",
+        "status": "passed",
+        "detail": "1 file, inside apps/storefront/src: views.ts"
+      },
+      {
+        "id": "no_dependency_changes",
+        "status": "passed",
+        "detail": "No package.json, lockfile, CI, env or script files touched"
+      },
+      {
+        "id": "size_within_bounds",
+        "status": "passed",
+        "detail": "1 file, 68 changed lines (limit 5 files, 300 lines)"
+      },
+      {
+        "id": "applies_cleanly",
+        "status": "passed",
+        "detail": "git apply --check succeeded at 4c7e2b9",
+        "durationMs": 310
+      },
+      {
+        "id": "content_policy",
+        "status": "passed",
+        "detail": "Added lines carry no network calls, dynamic code, secrets, obfuscation or hidden controls"
+      },
+      {
+        "id": "typecheck",
+        "status": "passed",
+        "detail": "tsc --noEmit in apps/storefront: 0 errors",
+        "durationMs": 4100
+      },
+      {
+        "id": "rematch",
+        "status": "passed",
+        "detail": "Agent Alpha passed 8 of 8 checkpoints on a patched copy of the store",
+        "durationMs": 9800
+      }
+    ],
+    "review": {
+      "verdict": "approve",
+      "humanVisibleChange": false,
+      "addressesObservedFailure": true,
+      "minimal": true,
+      "notes": [
+        "Exposes the size options as labelled radio inputs so a text-only agent can find and select them; the existing styles keep the look."
+      ],
+      "model": "claude-haiku-5-5",
+      "usage": {
+        "calls": 1,
+        "inputTokens": 2410,
+        "outputTokens": 180,
+        "estimatedCostUsd": 0.0012
+      }
+    },
+    "delivery": { "mode": "pull_request", "status": "not_requested" },
+    "opened": {
+      "mode": "pull_request",
+      "status": "delivered",
+      "branch": "agentproof/fix-size-selector-4c7e2b9",
+      "commitSha": "b7d1f3a9c2e4d6f8a0b1c2d3e4f5a6b7c8d9e0f1",
+      "pullRequestUrl": "https://github.com/northwind/storefront/pull/12",
+      "pullRequestNumber": 12,
+      "draft": true,
+      "actor": "github_app",
+      "deliveredAt": "2026-10-18T04:02:11.000Z"
+    }
+  },
+  "iss_b2c3d4e5f6a1": {
+    "checks": [
+      {
+        "id": "paths_in_scope",
+        "status": "passed",
+        "detail": "1 file, inside apps/storefront/src: cart.ts"
+      },
+      {
+        "id": "no_dependency_changes",
+        "status": "passed",
+        "detail": "No package.json, lockfile, CI, env or script files touched"
+      },
+      {
+        "id": "size_within_bounds",
+        "status": "passed",
+        "detail": "1 file, 4 changed lines (limit 5 files, 300 lines)"
+      },
+      {
+        "id": "applies_cleanly",
+        "status": "passed",
+        "detail": "git apply --check succeeded at 4c7e2b9",
+        "durationMs": 280
+      },
+      {
+        "id": "content_policy",
+        "status": "passed",
+        "detail": "Added lines carry no network calls, dynamic code, secrets, obfuscation or hidden controls"
+      },
+      {
+        "id": "typecheck",
+        "status": "passed",
+        "detail": "tsc --noEmit in apps/storefront: 0 errors",
+        "durationMs": 3900
+      },
+      {
+        "id": "rematch",
+        "status": "passed",
+        "detail": "Agent Gamma passed 9 of 9 checkpoints on a patched copy of the store",
+        "durationMs": 2100
+      }
+    ],
+    "review": {
+      "verdict": "approve",
+      "humanVisibleChange": false,
+      "addressesObservedFailure": true,
+      "minimal": true,
+      "notes": [
+        "Resolves the cart line from the requested variant id instead of the first variant of the product; nothing a shopper sees changes."
+      ],
+      "model": "claude-haiku-5-5",
+      "usage": {
+        "calls": 1,
+        "inputTokens": 1980,
+        "outputTokens": 150,
+        "estimatedCostUsd": 0.001
+      }
+    },
+    "delivery": { "mode": "pull_request", "status": "not_requested" },
+    "opened": {
+      "mode": "pull_request",
+      "status": "delivered",
+      "branch": "agentproof/fix-cart-variant-4c7e2b9",
+      "commitSha": "c8e2a4b0d3f5e7a9b1c2d3e4f5a6b7c8d9e0f1a2",
+      "pullRequestUrl": "https://github.com/northwind/storefront/pull/13",
+      "pullRequestNumber": 13,
+      "draft": true,
+      "actor": "github_app",
+      "deliveredAt": "2026-10-18T04:02:19.000Z"
+    }
+  }
+}

@@ -6,7 +6,11 @@ import {
   RepositoryConnection,
 } from '@agentproof/shared';
 import type { AgentKind } from '@agentproof/shared';
+import { z } from 'zod';
 
+import { CodeFixPreview } from '../flow/fixes-data';
+
+import codefixesABuggedJson from './codefixes-a-bugged.json';
 import issueAlphaABuggedJson from './issue-alpha-a-bugged.json';
 import issueGammaABuggedJson from './issue-gamma-a-bugged.json';
 import missionABuggedJson from './mission-a-bugged.json';
@@ -19,6 +23,7 @@ import runAlphaABuggedJson from './run-alpha-a-bugged.json';
 import runBetaABuggedJson from './run-beta-a-bugged.json';
 import runGammaABuggedJson from './run-gamma-a-bugged.json';
 import runSigmaABuggedJson from './run-sigma-a-bugged.json';
+import snapshotsABuggedJson from './snapshots-a-bugged.json';
 
 /**
  * Recorded reports for the design sandbox. Each JSON is a report the runner wrote on
@@ -89,6 +94,25 @@ export function resolveDesignArtifact(path: string | undefined): string | undefi
   const index = match[2] ?? '';
   return prefix ? `/design/${prefix}-step-${index.slice(1)}.png` : undefined;
 }
+
+/**
+ * The accessibility-tree snapshots Alpha and Sigma read at each step, keyed by the report's
+ * `snapshotPath`, copied verbatim from data/artifacts. Beta has none: it only looks. At wiring
+ * the runner serves these as artifacts, like the frames.
+ */
+export const snapshotsABugged: Record<string, string> = z
+  .record(z.string(), z.string())
+  .parse(snapshotsABuggedJson);
+
+/**
+ * HAND-WRITTEN. What the code-fix agent reports about each fix beyond its diff, keyed by issue
+ * id: the seven validation checks, the reviewer's second opinion, the delivery before and
+ * after "open draft pull requests". Mirrors the `CodeFix` record's `validation`, `review` and
+ * `delivery` fields; no fix has been recorded through the runner on this repository yet.
+ */
+export const codefixesABugged: Record<string, CodeFixPreview> = z
+  .record(z.string(), CodeFixPreview)
+  .parse(codefixesABuggedJson);
 
 /**
  * The two problems on the bugged Bug A mission, composed from the recorded reports.

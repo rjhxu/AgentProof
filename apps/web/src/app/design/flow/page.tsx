@@ -1,13 +1,17 @@
 import { Flow } from '@/design/flow/flow';
 import { FLOW_STEPS, type FlowStep } from '@/design/flow/flow-machine';
 import {
+  codefixesABugged,
   missionABugged,
   problemsABugged,
   repositoryA,
   resolveDesignArtifact,
   runsABugged,
+  snapshotsABugged,
 } from '@/design/fixtures';
+import { inStageOrder } from '@/design/flow/stage';
 import { buildReplayScript } from '@/design/replay/script';
+import type { FailurePoint, ObservedCart } from '@agentproof/shared';
 
 type Search = Record<string, string | string[] | undefined>;
 
@@ -36,9 +40,13 @@ export default async function FlowPage({ searchParams }: { searchParams: Promise
   const tRaw = first(sp.t);
   const t: number | 'end' | null = tRaw === 'end' ? 'end' : tRaw ? Number(tRaw) || null : null;
 
-  const script = buildReplayScript(runsABugged);
+  // One agent at a time on the Scan step, Sigma last; the live runner still runs them in parallel.
+  const runs = inStageOrder(runsABugged);
+  const script = buildReplayScript(runs, { sequential: true });
   const frames: Record<string, string> = {};
-  for (const run of runsABugged) {
+  const failurePoints: Record<string, FailurePoint> = {};
+  const observedCarts: Record<string, ObservedCart> = {};
+  for (const run of runs) {
     for (const s of run.steps) {
       const url = resolveDesignArtifact(s.screenshotPath);
       if (s.screenshotPath && url) frames[s.screenshotPath] = url;
@@ -46,18 +54,24 @@ export default async function FlowPage({ searchParams }: { searchParams: Promise
     const failing = run.failurePoint?.screenshotPath;
     const failingUrl = resolveDesignArtifact(failing);
     if (failing && failingUrl) frames[failing] = failingUrl;
+    if (run.failurePoint) failurePoints[run.runId] = run.failurePoint;
+    if (run.observedCart) observedCarts[run.runId] = run.observedCart;
   }
 
   return (
     <div data-theme="light" className="flow-root">
       <Flow
         report={missionABugged}
-        runs={runsABugged}
+        runs={runs}
         problems={problemsABugged}
+        codefixes={codefixesABugged}
         repository={repositoryA}
         script={script}
         mission={missionABugged.mission}
         frames={frames}
+        snapshots={snapshotsABugged}
+        failurePoints={failurePoints}
+        observedCarts={observedCarts}
         initial={{ step, speed, t }}
       />
     </div>

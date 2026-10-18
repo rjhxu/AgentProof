@@ -21,6 +21,8 @@ export type LaneState = {
   status: RunStatus;
   steps: RunStep[];
   latestScreenshotPath?: string;
+  /** The accessibility-tree snapshot the agent read before its latest step, when it reads. */
+  latestSnapshotPath?: string;
   checkpoints: Checkpoint[];
   /** Summed from each step's recorded usage as it arrives. */
   costUsd: number;
@@ -65,10 +67,13 @@ export function reduceLane(lane: LaneState, event: RunEvent): LaneState {
         stage: stageOf(step.url),
       };
     }
-    case 'evidence':
-      return event.evidence.kind === 'screenshot' && event.evidence.path
-        ? { ...lane, latestScreenshotPath: event.evidence.path }
-        : lane;
+    case 'evidence': {
+      const { kind, path } = event.evidence;
+      if (!path) return lane;
+      if (kind === 'screenshot') return { ...lane, latestScreenshotPath: path };
+      if (kind === 'dom_snapshot') return { ...lane, latestSnapshotPath: path };
+      return lane;
+    }
     case 'checkpoint': {
       const others = lane.checkpoints.filter((c) => c.id !== event.checkpoint.id);
       return { ...lane, checkpoints: [...others, event.checkpoint] };

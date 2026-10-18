@@ -67,6 +67,32 @@ describe('replay script', () => {
   });
 });
 
+describe('sequential replay script', () => {
+  const sequential = buildReplayScript(runsABugged, { sequential: true });
+  const reportAt = (runId: string) =>
+    sequential.find((e) => e.event.type === 'report' && e.event.runId === runId)!.at;
+  const startAt = (runId: string) =>
+    sequential.find(
+      (e) => e.event.type === 'status' && e.event.runId === runId && e.event.status === 'running',
+    )!.at;
+
+  it('starts each agent, Gamma included, only after the previous one has reported', () => {
+    for (let i = 1; i < runsABugged.length; i++) {
+      expect(startAt(runsABugged[i]!.runId)).toBeGreaterThan(reportAt(runsABugged[i - 1]!.runId));
+    }
+    expect(startAt(runsABugged[0]!.runId)).toBe(0);
+  });
+
+  it('holds longer after a failure and finishes in well under half a minute', () => {
+    const alpha = runsABugged.find((r) => r.status === 'failed' && r.steps.length > 0)!;
+    const next = runsABugged[runsABugged.indexOf(alpha) + 1]!;
+    expect(startAt(next.runId) - reportAt(alpha.runId)).toBeGreaterThanOrEqual(2800);
+    const total = scriptDurationMs(sequential);
+    expect(total).toBeGreaterThan(10000);
+    expect(total).toBeLessThan(30000);
+  });
+});
+
 describe('lane reducer', () => {
   it('reproduces every report when the whole script is folded', () => {
     const seeds = runsABugged.map((r) => ({ runId: r.runId, agent: r.agent }));
