@@ -16,7 +16,7 @@ The bugs themselves are explained in [bugs-and-fixes.md](bugs-and-fixes.md), whi
 | [verify-scenarios.mjs](verify-scenarios.mjs) | Grader: runs a semantic "agent" shopper and a mouse "human" shopper against every scenario |
 | [export-standalone.sh](export-standalone.sh) | Copies the store into a new repo, optionally with the hint comments stripped               |
 
-All of these are the answer key in one form or another. Keep them out of whatever repo the code-fix agent can read. Note that `docs/storefront/` is gitignored in AgentProof, so share these files by hand if a teammate needs them.
+All of these are the answer key in one form or another. Keep them out of whatever repo the code-fix agent can read. They are committed in the AgentProof repo; keep them out of the exported store repo (the export script does not copy them).
 
 ---
 
@@ -141,7 +141,7 @@ The code-fix agent reads source and writes a patch. Inside the AgentProof monore
 - the answer key (`docs/storefront/`, if present)
 - AgentProof's own code and docs, which describe the planted bugs (`ARCHITECTURE.md`, `DEMO.md`, the fixtures)
 
-A standalone repo contains only the store. It has one commit tagged `baseline` to reset to, and its diffs are clean to review.
+A standalone repo contains only the store. It has one commit tagged `baseline` to reset to, and its diffs are clean to review. For the "after the fix" half of a demo, `scripts/make-fixed-store.sh <dest>` does this export and then applies the five reference patches (tag `fixed`), so the monorepo store keeps its bugs.
 
 ### 1. Export
 

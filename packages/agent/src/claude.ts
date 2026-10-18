@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { resolveModel } from './profiles';
 
 /**
  * @deprecated Use getLlm() from ./llm (provider-neutral; xAI Grok by default, Anthropic as the
@@ -6,9 +7,10 @@ import Anthropic from '@anthropic-ai/sdk';
  * code must not import it. FALLBACKS is still read by the Anthropic adapter in ./llm.
  *
  * Single shared Claude client. Resolves credentials from ANTHROPIC_API_KEY.
- * Model is configurable via AGENTPROOF_MODEL so the whole team can switch at once.
+ * MODEL comes from the `diagnosis` role in profiles.ts (Haiku by default on Anthropic, never
+ * Opus). Override with AGENTPROOF_MODEL_DIAGNOSIS, or AGENTPROOF_MODEL for every role.
  */
-export const MODEL = process.env.AGENTPROOF_MODEL ?? 'claude-opus-5-5';
+export const MODEL = resolveModel('diagnosis', 'anthropic');
 
 let client: Anthropic | undefined;
 /** @deprecated See the file header: use getLlm() from ./llm. */

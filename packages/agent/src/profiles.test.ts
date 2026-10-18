@@ -20,6 +20,7 @@ const MODEL_ENV = [
   'AGENTPROOF_MODEL_GAMMA',
   'AGENTPROOF_MODEL_NARRATOR',
   'AGENTPROOF_MODEL_MISSION',
+  'AGENTPROOF_MODEL_DIAGNOSIS',
   'AGENTPROOF_MAX_STEPS',
 ];
 
@@ -59,6 +60,17 @@ describe('AGENT_PROFILES', () => {
     expect(AGENT_PROFILES.gamma_structured.defaultMaxSteps).toBe(1);
   });
 
+  it('never defaults any model to Opus, for either provider', () => {
+    const defaults = [
+      ...Object.values(AGENT_PROFILES).map((profile) => profile.defaultModel),
+      ...Object.values(ROLE_MODELS),
+    ];
+    for (const model of defaults) {
+      expect(model.xai.toLowerCase()).not.toContain('opus');
+      expect(model.anthropic.toLowerCase()).not.toContain('opus');
+    }
+  });
+
   it('prices every default model so reports can show cost', () => {
     for (const profile of Object.values(AGENT_PROFILES)) {
       if (profile.defaultModel.xai === 'none') continue;
@@ -83,6 +95,21 @@ describe('resolveModel', () => {
     expect(resolveModel('narrator', 'xai')).toBe('grok-4.20-0309-non-reasoning');
     expect(resolveModel('mission', 'anthropic')).toBe('claude-haiku-5-5');
     expect(resolveModel('gamma_structured', 'xai')).toBe('none');
+  });
+
+  it('defaults the diagnosis role to a cheap model per provider', () => {
+    clearEnv();
+    expect(resolveModel('diagnosis', 'anthropic')).toBe('claude-haiku-5-5');
+    expect(resolveModel('diagnosis', 'xai')).toBe('grok-4.3');
+  });
+
+  it('lets AGENTPROOF_MODEL_DIAGNOSIS and AGENTPROOF_MODEL override the diagnosis role', () => {
+    clearEnv();
+    vi.stubEnv('AGENTPROOF_MODEL_DIAGNOSIS', 'foo');
+    expect(resolveModel('diagnosis', 'anthropic')).toBe('foo');
+    vi.stubEnv('AGENTPROOF_MODEL_DIAGNOSIS', '');
+    vi.stubEnv('AGENTPROOF_MODEL', 'bar');
+    expect(resolveModel('diagnosis', 'anthropic')).toBe('bar');
   });
 
   it('returns the xai default for the mock provider', () => {

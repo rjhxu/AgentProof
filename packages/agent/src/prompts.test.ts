@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentKind, RunStep } from '@agentproof/shared';
+import type { AgentAction, AgentKind, RunStep } from '@agentproof/shared';
 import { alphaFailedRun, hoodieMission } from '@agentproof/shared/fixtures';
 import type { LlmContentBlock } from './llm-types';
 import {
@@ -10,6 +10,7 @@ import {
   TEXT_CHAR_CAP,
   buildNarrativePrompt,
   buildUserTurn,
+  summarizeRun,
   systemPromptFor,
   type ObservationInput,
 } from './prompts';
@@ -146,7 +147,74 @@ describe('systemPromptFor', () => {
       expect(p).toContain(RETRY_RULE);
       expect(p).toContain('counts as the same target');
       expect(p).not.toContain('3 times');
+      expect(p).toContain('RUN SUMMARY');
     }
+  });
+});
+
+describe('summarizeRun', () => {
+  const step = (
+    index: number,
+    action: AgentAction | undefined,
+    outcome: RunStep['outcome'] = 'ok',
+  ): RunStep => ({ index, at: 't', action, outcome });
+  const scroll: AgentAction = { type: 'scroll', direction: 'down', reason: '' };
+  const clear: AgentAction = { type: 'click', target: 'button:Clear cart', reason: '' };
+  const selectSize: AgentAction = {
+    type: 'select',
+    target: 'Size',
+    value: 'M',
+    reason: '',
+  };
+  const addToCart: AgentAction = { type: 'click', target: 'button:Add to cart', reason: '' };
+
+  it('counts a successful clear even when it is older than the recent steps', () => {
+    const history: RunStep[] = Array.from({ length: 8 }, (_, i) =>
+      step(i, i === 2 ? clear : scroll),
+    );
+    const summary = summarizeRun(history);
+    expect(summary).toContain('steps taken: 8');
+    expect(summary).toContain('cart cleared: 1 time(s); the rules allow one clear per run');
+    expect(summary).toContain('failed attempts by target: none');
+
+    const rendered = joined(turn(ALPHA, { history }));
+    expect(rendered).toContain('cart cleared: 1 time(s)');
+    expect(rendered.indexOf('RECENT STEPS')).toBeLessThan(rendered.indexOf('RUN SUMMARY'));
+    expect(rendered.indexOf('RUN SUMMARY')).toBeLessThan(rendered.indexOf('TARGET GRAMMAR'));
+  });
+
+  it('does not count a failed clear or a coordinate click as a clear', () => {
+    const history: RunStep[] = [
+      step(0, clear, 'error'),
+      step(1, { type: 'click', target: '412,388', reason: '' }),
+      step(2, { type: 'click', target: 'button:Clear cart', reason: '' }, 'ok'),
+    ];
+    expect(summarizeRun(history)).toContain('cart cleared: 1 time(s)');
+  });
+
+  it('groups failed attempts by target, most failures first, and ignores ok steps', () => {
+    const history: RunStep[] = [
+      step(0, addToCart, 'error'),
+      step(1, selectSize, 'error'),
+      step(2, addToCart, 'ok'),
+      step(3, selectSize, 'error'),
+      step(4, { type: 'type', target: 'spinbutton:Quantity', text: '2', reason: '' }, 'ok'),
+      step(5, undefined, 'error'),
+    ];
+    expect(summarizeRun(history)).toContain(
+      'failed attempts by target: select Size = M x2, click button:Add to cart x1',
+    );
+  });
+
+  it('reads zero counts and "none" when there is no history', () => {
+    expect(summarizeRun([])).toBe(
+      [
+        'RUN SUMMARY (whole run, not just the recent steps)',
+        'steps taken: 0',
+        'cart cleared: 0 time(s)',
+        'failed attempts by target: none',
+      ].join('\n'),
+    );
   });
 });
 

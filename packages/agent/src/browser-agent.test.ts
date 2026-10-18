@@ -513,11 +513,36 @@ describe('runBrowserAgent: Alpha on Bug A', () => {
     );
     expect(r.result.outcome).toBe('fail');
     expect(r.result.summary).toBe(
-      'stuck: no radio "M", combobox "Size", or button "M" in the accessibility tree',
+      'stuck: 5 consecutive failed steps; last: select Size = M -> no radio "M", combobox "Size", or button "M" in the accessibility tree',
     );
     expect(r.result.stepsUsed).toBe(STUCK_STEP_LIMIT);
     expect(r.llm.requests).toHaveLength(STUCK_STEP_LIMIT);
     expect(r.browser.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('caps the stuck summary at 300 characters and keeps the last attempted action', async () => {
+    // A long absent name makes the step's detail (capped at 300 by the loop) push the summary over.
+    const longName = 'Q'.repeat(250);
+    const r = await run('alpha_semantic', [typeInto(`textbox:${longName}`, 'hello')]);
+    expect(r.result.outcome).toBe('fail');
+    expect(r.result.summary.length).toBe(300);
+    expect(
+      r.result.summary.startsWith(
+        'stuck: 5 consecutive failed steps; last: type "hello" into textbox:QQQ',
+      ),
+    ).toBe(true);
+    expect(r.result.summary.endsWith('...')).toBe(true);
+  });
+
+  it('fails an absent role click at once with the tree message, without waiting for a timeout', async () => {
+    const absent = missingLocator('button', 'Add to cart');
+    const page = new FakePage();
+    page.controls.set('button:Add to cart', absent);
+    const r = await run('alpha_semantic', [click('button:Add to cart'), done('ok')], { page });
+    expect(r.steps[0]?.outcome).toBe('error');
+    expect(r.steps[0]?.outcomeDetail).toBe('no button "Add to cart" in the accessibility tree');
+    expect(absent.click).not.toHaveBeenCalled();
+    expect(r.result.outcome).toBe('done');
   });
 
   it('records a policy rejection without executing it and lets the run continue', async () => {
@@ -644,7 +669,7 @@ describe('runBrowserAgent: Alpha on Bug A', () => {
   it('records an act error as the first line of the message, capped', async () => {
     const r = await run('alpha_semantic', [click('button:Does not exist'), done('ok')]);
     expect(r.steps[0]?.outcome).toBe('error');
-    expect(r.steps[0]?.outcomeDetail).toBe('locator.click: Timeout 5000ms exceeded.');
+    expect(r.steps[0]?.outcomeDetail).toBe('no button "Does not exist" in the accessibility tree');
     expect(r.result.outcome).toBe('done');
   });
 
