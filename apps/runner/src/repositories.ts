@@ -5,6 +5,12 @@ import path from 'node:path';
 import { config } from './config';
 
 const MAX_FILES = 500;
+/**
+ * Classic (ghp_, gho_) and fine-grained (github_pat_) personal tokens, and GitHub App
+ * installation tokens, which in their current format run to a few hundred characters and
+ * contain dots and hyphens. The token only ever reaches git through the environment.
+ */
+export const TOKEN_PATTERN = /^[A-Za-z0-9._-]{1,1024}$/;
 const GIT_TIMEOUT_MS = 90_000;
 
 export interface ConnectedRepository {
@@ -134,7 +140,7 @@ export async function connectRepository(
 ): Promise<ConnectedRepository> {
   const url = validateGitHubUrl(input.url);
   const token = input.token?.trim() || undefined;
-  if (token && !/^[a-zA-Z0-9_-]{1,512}$/.test(token)) {
+  if (token && !TOKEN_PATTERN.test(token)) {
     throw new RepositoryConnectionError('The access token contains invalid characters.');
   }
   const { root, directory } = repositoryDirectory(id);
@@ -332,7 +338,7 @@ export async function commitAndPush(input: CommitAndPushInput): Promise<{ commit
     );
   }
   const token = input.token?.trim() || undefined;
-  if (token && !/^[a-zA-Z0-9_-]{1,512}$/.test(token)) {
+  if (token && !TOKEN_PATTERN.test(token)) {
     throw new RepositoryConnectionError('The access token contains invalid characters.');
   }
   const { root } = repositoryDirectory(input.id);
