@@ -11,6 +11,7 @@ Built for DubHacks 2026 (Visa Reimagine Shopping track).
 - The agents as built (Alpha, Beta, Gamma, Sigma): [docs/AGENTS.md](docs/AGENTS.md)
 - Live validation results, bugged and fixed store: [docs/RESULTS.md](docs/RESULTS.md)
 - The five planted bugs and their fixes: [docs/storefront/bugs-and-fixes.md](docs/storefront/bugs-and-fixes.md)
+- The code-fix agent, its trust rules and GitHub access: [docs/CODEFIX.md](docs/CODEFIX.md); what it did live: [docs/CODEFIX-RESULTS.md](docs/CODEFIX-RESULTS.md)
 - What is left and who does it: [docs/WORKPLAN.md](docs/WORKPLAN.md)
 - Demo runbook: [docs/DEMO.md](docs/DEMO.md)
 - Team conventions and ownership: [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)
@@ -80,7 +81,8 @@ packages/
   agent/        LLM layer, agent loop (Alpha/Beta/Sigma), Gamma, reports, CLI  (Zach; gamma.ts Vihan)
   verifier/     Deterministic checkpoint verification + attribution     (Vihan; attribute.ts Zach)
   diagnostics/  Root-cause analysis + repair diffs                       (Vihan)
-scripts/        run-mission.mjs (runner driver), make-fixed-store.sh (store with the fixes applied)
+  codefix/      The code-fix agent: evidence in, validated diff out      (Zach; docs/CODEFIX.md)
+scripts/        run-mission.mjs (runner driver), make-fixed-store.sh (store with the fixes applied), codefix.mjs (code-fix driver)
 data/
   artifacts/    Screenshots, aria snapshots, traces, reports per run and per mission (gitignored)
 docs/           Spec, architecture, agents, results, demo, contributing, storefront answer key
@@ -114,4 +116,6 @@ Three rules hold everywhere: verdicts are code (`packages/verifier`), never the 
 
 **Validated live** ([docs/RESULTS.md](docs/RESULTS.md)). On the bugged store every scenario comes out as the answer key predicts: Alpha fails A, C, D and E on the predicted checkpoint and passes the control; Beta and Sigma pass everything; Gamma fails B and passes the rest; attribution names the semantic interface for Alpha and the product data for Gamma. On the fixed store Alpha passes all five scenarios and Gamma passes B, with no change to the agents. Sigma costs 21x to 24x Alpha; an Alpha run costs under a cent.
 
-**Next.** The code-fix agent (consumes the reports and the repository connection; see [docs/WORKPLAN.md](docs/WORKPLAN.md)), validation of its output with the grader and the rematch, the multi-agent dashboard, the demo recording.
+**Built on `codefix-agent` and validated live** ([docs/CODEFIX-RESULTS.md](docs/CODEFIX-RESULTS.md)). The code-fix agent ([docs/CODEFIX.md](docs/CODEFIX.md)): reports and the repository snapshot in, a code-validated unified diff out, delivered as a diff, an `agentproof/*` branch or a draft pull request, never a merge. On the private store repo it fixed all five planted bugs on the first attempt, in 1 to 9 lines each, every one proven by a real rerun of the failing agent and by Ryan's grader, for under half a cent of model time per fix; the five are open as draft pull requests.
+
+**Next.** Validation of the code-fix output with the grader and the rematch, the multi-agent dashboard, the demo recording.
