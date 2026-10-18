@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { AgentAction, AgentConfig } from './agent';
+import { AgentAction, AgentConfig, AgentProfileSummary } from './agent';
 import { Checkpoint } from './checkpoint';
 import { Evidence, ObservedCart } from './evidence';
 import { LlmUsage } from './usage';
@@ -55,6 +55,11 @@ export const Run = z.object({
   id: z.string(),
   missionId: z.string(),
   agent: AgentConfig,
+  /**
+   * Human-facing profile of the agent (name, senses, model), filled by the runner when the run
+   * is created so a dashboard can label a lane before any report exists.
+   */
+  agentSummary: AgentProfileSummary.optional(),
   status: RunStatus,
   /** "original" for the first attempt, "rematch" for re-runs after a repair */
   label: z.enum(['original', 'rematch']).default('original'),

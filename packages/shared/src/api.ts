@@ -13,7 +13,11 @@ import { Run } from './run';
 // POST /missions  -> parse a prompt into a Mission (no runs started)
 export const CreateMissionRequest = z.object({
   storeUrl: z.url(),
-  prompt: z.string().min(1),
+  /**
+   * When absent the runner derives the mission from the store's catalog feed
+   * (GET /api/catalog.json) with no model call, and answers 422 when the store publishes none.
+   */
+  prompt: z.string().min(1).optional(),
 });
 export const CreateMissionResponse = z.object({ mission: Mission });
 
@@ -38,7 +42,7 @@ export const RematchResponse = z.object({ run: Run });
 // GET /runs/:id/compare/:otherId
 export const CompareResponse = z.object({ comparison: RunComparison });
 
-// POST /issues/:id/diagnose  -> run Claude root-cause analysis
+// POST /runs/:id/diagnose  -> root-cause analysis for the run's first failed checkpoint (one Issue)
 export const DiagnoseResponse = z.object({ issue: Issue });
 
 // POST /issues/:id/repair  -> generate a reviewable diff
@@ -64,6 +68,15 @@ export const GetRunReportResponse = z.object({ report: AgentReport });
 // GET /missions/:id/report  -> cross-agent mission report (also served as .md)
 export const GetMissionReportResponse = z.object({ report: MissionReport });
 
+// GET /missions/:id  -> the mission, its runs (original and rematch), and the mission report
+// path once one exists
+export const GetMissionResponse = z.object({
+  mission: Mission,
+  runs: z.array(Run),
+  /** Artifacts-relative path of the cross-agent report JSON, e.g. "missions/mis_abc/report.json" */
+  missionReportPath: z.string().optional(),
+});
+
 export const ErrorResponse = z.object({ error: z.string() });
 
 export type CreateMissionRequest = z.infer<typeof CreateMissionRequest>;
@@ -81,3 +94,4 @@ export type FixtureMissionRequest = z.infer<typeof FixtureMissionRequest>;
 export type FixtureMissionResponse = z.infer<typeof FixtureMissionResponse>;
 export type GetRunReportResponse = z.infer<typeof GetRunReportResponse>;
 export type GetMissionReportResponse = z.infer<typeof GetMissionReportResponse>;
+export type GetMissionResponse = z.infer<typeof GetMissionResponse>;
