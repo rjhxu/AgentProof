@@ -21,6 +21,7 @@ import type {
   CodeFixRequest,
   CodeFixResponse,
   ListCodeFixesResponse,
+  GitHubAppRepositoriesResponse,
   GitHubAppStatusResponse,
 } from '@agentproof/shared';
 
@@ -136,6 +137,8 @@ export const api = {
   codeFixEventsUrl: (codefixId: string) => `${BASE}/codefix/${codefixId}/events`,
   /** Whether the runner has a GitHub App identity, and where to install it; never the key. */
   getGitHubApp: () => call<GitHubAppStatusResponse>('/github/app'),
+  /** Repositories the GitHub App is installed on. Empty when the app is not configured. */
+  listGitHubAppRepositories: () => call<GitHubAppRepositoriesResponse>('/github/app/repositories'),
   /** The one-button registration page (opens in a new tab; GitHub returns to the runner). */
   gitHubAppSetupUrl: () => `${BASE}/github/app/setup`,
   /** Live stage/log/done events for a fix; closes after `done`. Browser only. */
