@@ -59,7 +59,7 @@ export const AGENT_PROFILES: Record<AgentKind, AgentProfile> = {
     perceives: ['screenshot'],
     perceivesLabels: ['viewport screenshot'],
     targetGrammars: ['x,y'],
-    defaultModel: { xai: 'grok-4.3', anthropic: 'claude-sonnet-5-5' },
+    defaultModel: { xai: 'grok-4.3', anthropic: 'claude-haiku-5-5' },
     defaultEffort: 'medium',
     defaultMaxSteps: 20,
     imageDetail: 'high',
@@ -88,7 +88,7 @@ export const AGENT_PROFILES: Record<AgentKind, AgentProfile> = {
       'page text excerpt',
     ],
     targetGrammars: ['role:name', 'x,y'],
-    defaultModel: { xai: 'grok-4.7', anthropic: 'claude-opus-5-5' },
+    defaultModel: { xai: 'grok-4.7', anthropic: 'claude-sonnet-5-5' },
     defaultEffort: 'high',
     defaultMaxSteps: 30,
     imageDetail: 'high',
@@ -100,7 +100,7 @@ export const AGENT_PROFILES: Record<AgentKind, AgentProfile> = {
 /** Non-agent model roles: report narration and mission generation. */
 export const ROLE_MODELS: Record<'narrator' | 'mission', { xai: string; anthropic: string }> = {
   narrator: { xai: 'grok-4.20-0309-non-reasoning', anthropic: 'claude-haiku-5-5' },
-  mission: { xai: 'grok-4.3', anthropic: 'claude-sonnet-5-5' },
+  mission: { xai: 'grok-4.3', anthropic: 'claude-haiku-5-5' },
 };
 
 export type ModelRole = AgentKind | keyof typeof ROLE_MODELS;
