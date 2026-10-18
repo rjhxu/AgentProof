@@ -10,6 +10,7 @@ import type {
   Issue,
   Mission,
   MissionReport,
+  ObservedCart,
   Repair,
   RepositoryConnection,
 } from '@agentproof/shared';
@@ -38,6 +39,8 @@ export type FlowProps = {
   snapshots: Record<string, string>;
   /** Run id -> where the run diverged, from each report. */
   failurePoints: Record<string, FailurePoint>;
+  /** Run id -> the cart the verifier observed, from each report. */
+  observedCarts: Record<string, ObservedCart>;
   initial: { step: FlowStep; speed: number; t: number | 'end' | null };
 };
 
@@ -230,6 +233,7 @@ export function Flow(p: FlowProps) {
                 costComparison={state.phase === 'done' ? p.report.costComparison : undefined}
                 snapshots={p.snapshots}
                 failurePoints={p.failurePoints}
+                observedCarts={p.observedCarts}
                 resolveArtifactUrl={resolveArtifactUrl}
                 onContinue={() => dispatch({ type: 'CONTINUE' })}
               />

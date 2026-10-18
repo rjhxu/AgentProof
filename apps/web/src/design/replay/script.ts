@@ -90,15 +90,22 @@ export function buildReplayScript(
       push(at, { type: 'status', runId, status: value, at: stamp });
 
     if (report.steps.length === 0) {
-      status(60, 'running');
-      const verifyAt = Math.max(160, o.noBrowserFinishMs * 0.4);
+      // On its own clock from zero in parallel mode; in its turn in sequential mode.
+      const base = o.sequential
+        ? laneIndex === 0
+          ? 0
+          : previousReportAt + (previousFailed ? o.failGapMs : o.laneGapMs)
+        : 0;
+      if (o.sequential) laneIndex += 1;
+      status(base + 60, 'running');
+      const verifyAt = base + Math.max(160, o.noBrowserFinishMs * 0.4);
       status(verifyAt, 'verifying');
       let t = verifyAt + 200;
       for (const checkpoint of report.checkpoints) {
         push(t, { type: 'checkpoint', runId, checkpoint });
         t += o.checkpointGapMs;
       }
-      const finishAt = Math.max(t + 100, o.noBrowserFinishMs);
+      const finishAt = Math.max(t + 100, base + o.noBrowserFinishMs);
       status(finishAt, report.status);
       push(finishAt + 50, {
         type: 'report',
@@ -106,6 +113,10 @@ export function buildReplayScript(
         reportPath: `${runId}/report.json`,
         at: report.generatedAt,
       });
+      if (o.sequential) {
+        previousReportAt = finishAt + 50;
+        previousFailed = report.status !== 'passed';
+      }
       continue;
     }
 

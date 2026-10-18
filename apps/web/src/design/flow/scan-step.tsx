@@ -1,14 +1,16 @@
 'use client';
 
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { CHECKPOINT_LABELS, CHECKPOINT_ORDER } from '@agentproof/shared';
 import type {
   AgentKind,
+  Checkpoint,
   CheckpointId,
   FailurePoint,
   Mission,
   MissionReport,
+  ObservedCart,
   RunStep,
 } from '@agentproof/shared';
 
@@ -41,10 +43,11 @@ import {
   TextLinesIcon,
 } from './icons';
 import { ScanMark } from './illustrations';
-import { browsingLanes, costScale, gammaLane, nextLane, stageLane } from './stage';
+import { costScale, nextLane, stageLane } from './stage';
 
 export type ScanStepProps = {
   mission: Mission;
+  /** In stage order: the agents take the stage in this order and sit in the roster in it. */
   lanes: LaneState[];
   phase: 'running' | 'done';
   summary?: ScanSummary;
@@ -58,6 +61,8 @@ export type ScanStepProps = {
   snapshots: Record<string, string>;
   /** Run id -> where the run diverged, from its report; shown once a lane has failed. */
   failurePoints: Record<string, FailurePoint>;
+  /** Run id -> the cart the verifier observed, for the data check's stage. */
+  observedCarts: Record<string, ObservedCart>;
   resolveArtifactUrl: (path: string | undefined) => string | undefined;
   onContinue: () => void;
 };
@@ -71,6 +76,20 @@ const DESCRIPTOR: Record<AgentKind, string> = {
 
 /** The shopper that stands for a careful human: every sense, the strongest model, the price. */
 const BENCHMARK_KIND: AgentKind = 'sigma_hybrid';
+
+/** What Gamma does, in one line, always visible on its stage. */
+const GAMMA_WHAT =
+  'Reads the product data your store publishes and tries the cart API with it, the way integrations and AI shoppers do. No browser, no model.';
+
+/** Why a failed data check matters, in plain words. Code-written copy keyed by the checkpoint. */
+const GAMMA_WHY: Partial<Record<CheckpointId, string>> = {
+  catalog_variant_resolves:
+    'The id your catalog publishes for this variant lands in the cart as a different product. Anything shopping from your product data gets the wrong item, unseen.',
+  cart_matches_variant:
+    'The cart holds a different variant from the one requested by id. Anything shopping from your product data gets the wrong item.',
+  catalog_price_matches_page:
+    'The price in your product data differs from the page. Anything shopping from the data sees the wrong price.',
+};
 
 const GAMMA_ONLY: CheckpointId[] = ['catalog_variant_resolves', 'catalog_price_matches_page'];
 
@@ -109,9 +128,14 @@ function Tick({ id, status }: { id: CheckpointId; status?: string }) {
   );
 }
 
-function Track({ stage }: { stage: PathStage }) {
-  const index = Math.max(0, STAGES.indexOf(stage));
-  const pct = (index / (STAGES.length - 1)) * 100;
+/** The purchase path for a shopper; the two data stages for the catalog check. */
+function Track({ stage, browses }: { stage: PathStage; browses: boolean }) {
+  const stages: PathStage[] = browses ? [...STAGES] : ['find', 'cart'];
+  const labels: Record<PathStage, string> = browses
+    ? STAGE_LABELS
+    : { find: 'Catalog feed', variant: '', cart: 'Cart API', review: '' };
+  const index = Math.max(0, stages.indexOf(stage));
+  const pct = stages.length > 1 ? (index / (stages.length - 1)) * 100 : 0;
   return (
     <div className="relative mt-3">
       <div className="h-px w-full bg-[var(--line)]" />
@@ -128,9 +152,9 @@ function Track({ stage }: { stage: PathStage }) {
         transition={{ type: 'spring', stiffness: 120, damping: 20 }}
       />
       <ol className="mt-2 flex justify-between text-[11px] text-[var(--muted)]">
-        {STAGES.map((s, i) => (
+        {stages.map((s, i) => (
           <li key={s} className={i <= index ? 'text-[var(--foreground)]' : undefined}>
-            {STAGE_LABELS[s]}
+            {labels[s]}
           </li>
         ))}
       </ol>
@@ -138,7 +162,7 @@ function Track({ stage }: { stage: PathStage }) {
   );
 }
 
-/** What a shopper perceives, as three small marks: lit when it has that sense. */
+/** What an agent perceives, as three small marks: lit when it has that sense. */
 function SenseIcons({ kind, size = 12 }: { kind: AgentKind; size?: number }) {
   const has = senses(kind);
   if (has.includes('api')) {
@@ -205,7 +229,7 @@ function statusWord(lane: LaneState, role: RosterRole): string {
   if (!browses) {
     if (lane.status === 'passed') return 'no problem found';
     if (lane.status === 'failed') return 'found a problem';
-    if (lane.status === 'queued') return 'waiting';
+    if (lane.status === 'queued') return role === 'next' ? 'up next' : 'waiting';
     if (isTerminal(lane.status)) return 'stopped';
     return 'checking the catalog';
   }
@@ -217,6 +241,8 @@ function statusWord(lane: LaneState, role: RosterRole): string {
   return role === 'next' ? 'up next' : 'waiting';
 }
 
+type FinalCost = { costUsd: number; multiple?: string };
+
 function RosterChip({
   lane,
   role,
@@ -225,7 +251,7 @@ function RosterChip({
 }: {
   lane: LaneState;
   role: RosterRole;
-  /** The most expensive shopper so far; every cost bar is drawn against it. */
+  /** The most expensive agent so far; every cost bar is drawn against it. */
   scale: number;
   /** From the report once the scan is done: the exact cost and "22× Alpha". */
   final?: FinalCost;
@@ -264,6 +290,8 @@ function RosterChip({
       <p className="mt-0.5 truncate text-[11px] text-[var(--muted)]">
         {lane.agent.kind === BENCHMARK_KIND ? (
           <span className="text-[var(--foreground)]">benchmark shopper · </span>
+        ) : !browses ? (
+          <span className="text-[var(--foreground)]">catalog check · </span>
         ) : null}
         {statusWord(lane, role)}
       </p>
@@ -309,7 +337,7 @@ function TreePanel({
           key={i}
           ref={i === hit ? ref : undefined}
           className={[
-            'block rounded-sm px-1 -mx-1',
+            '-mx-1 block rounded-sm px-1',
             i === hit
               ? failed
                 ? 'bg-[var(--fail-soft)] outline outline-1 outline-[var(--fail)]'
@@ -377,7 +405,14 @@ function ShotPanel({
   );
 }
 
-/** The store as this shopper sees it: text, pixels, or both. */
+function frameClass(failed: boolean): string {
+  return [
+    'stage-box relative overflow-hidden rounded-md border bg-[var(--panel)]',
+    failed ? 'border-[var(--fail)] ring-4 ring-[var(--fail-soft)]' : 'border-[var(--line)]',
+  ].join(' ');
+}
+
+/** The store as a shopper sees it: text, pixels, or both. */
 function PerceptionPanel({
   kind,
   shotUrl,
@@ -396,10 +431,7 @@ function PerceptionPanel({
   const has = senses(kind);
   const reads = has.includes('reads');
   const looks = has.includes('looks');
-  const frame = [
-    'stage-box relative overflow-hidden rounded-md border bg-[var(--panel)]',
-    failed ? 'border-[var(--fail)] ring-4 ring-[var(--fail-soft)]' : 'border-[var(--line)]',
-  ].join(' ');
+  const frame = frameClass(failed);
   if (reads && looks) {
     return (
       <div className={`${frame} grid grid-cols-[3fr_2fr]`}>
@@ -426,17 +458,169 @@ function PerceptionPanel({
   );
 }
 
+/** A value that follows `value` after a delay, so a second beat lands after the first. */
+function useDelayedValue<T>(value: T, delayMs: number): T {
+  const [delayed, setDelayed] = useState(value);
+  useEffect(() => {
+    if (Object.is(delayed, value)) return;
+    const id = setTimeout(() => setDelayed(value), delayMs);
+    return () => clearTimeout(id);
+  }, [value, delayMs, delayed]);
+  return delayed;
+}
+
+/** The recorded detail without its JSON parentheticals: "Requested HOODIE-001-M; cart returned HOODIE-001-S." */
+function plainDetail(detail: string | undefined): string | undefined {
+  return detail?.replace(/\s*\(\{[^)]*\}\)/g, '');
+}
+
+function Beat({
+  status,
+  text,
+  placeholder,
+}: {
+  status: string;
+  text?: string;
+  placeholder: string;
+}) {
+  const resolved = status === 'passed' || status === 'failed';
+  return (
+    <motion.div
+      key={resolved ? 'resolved' : 'pending'}
+      initial={{ opacity: 0, x: -4 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ duration: 0.25 }}
+      className="flex min-w-0 items-start gap-2"
+    >
+      {status === 'failed' ? (
+        <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-[var(--fail)] text-white">
+          <CrossIcon size={10} />
+        </span>
+      ) : status === 'passed' ? (
+        <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-[var(--foreground)] text-[var(--background)]">
+          <CheckIcon size={10} />
+        </span>
+      ) : (
+        <span
+          className={`mt-0.5 h-4 w-4 shrink-0 rounded-full border border-[var(--line-strong)] ${status === 'running' ? 'animate-pulse' : ''}`}
+        />
+      )}
+      <span className={`min-w-0 leading-snug ${resolved ? '' : 'text-[var(--muted)]'}`}>
+        {resolved ? text : placeholder}
+      </span>
+    </motion.div>
+  );
+}
+
+/** The cart the verifier read back through the API, line by line. */
+function CartLines({ cart, failed }: { cart: ObservedCart; failed: boolean }) {
+  return (
+    <ul className="mt-2 space-y-1 font-mono text-[11px] leading-snug">
+      {cart.items.map((item) => (
+        <li key={item.variantId} className="flex flex-wrap gap-x-2">
+          <span className={failed ? 'font-semibold text-[var(--fail)]' : 'font-semibold'}>
+            {item.variantId}
+          </span>
+          <span className="text-[var(--muted)]">
+            {item.quantity} × {item.name},{' '}
+            {Object.entries(item.attributes)
+              .map(([k, v]) => `${k} ${v}`)
+              .join(', ')}
+            , ${item.unitPrice.toFixed(2)}
+          </span>
+        </li>
+      ))}
+      {cart.items.length === 0 ? <li className="text-[var(--muted)]">empty cart</li> : null}
+    </ul>
+  );
+}
+
+/**
+ * The store as Gamma sees it: the catalog feed and the cart API, played as two beats from the
+ * recorded checkpoints, catalog then cart a moment later, with the cart it read back.
+ */
+function DataPanel({
+  lane,
+  mission,
+  observedCart,
+  failed,
+}: {
+  lane: LaneState;
+  mission: Mission;
+  observedCart?: ObservedCart;
+  failed: boolean;
+}) {
+  const byId = new Map(lane.checkpoints.map((c) => [c.id, c] as const));
+  const catalog = byId.get('product_discovered') ?? byId.get('correct_size_identified');
+  const cart = byId.get('catalog_variant_resolves') ?? byId.get('cart_matches_variant');
+  const running = lane.status === 'running' || lane.status === 'verifying';
+  const pendingWord = running ? 'running' : 'pending';
+  const catalogStatus = catalog?.status ?? pendingWord;
+  // The cart beat lands a moment after the catalog beat, even though the runner sends both at once.
+  const cartStatus = useDelayedValue(cart?.status ?? pendingWord, 500);
+  const cartResolved = cartStatus === 'passed' || cartStatus === 'failed';
+  return (
+    <div
+      className={`${frameClass(failed)} flex flex-col gap-4 bg-[var(--background)] p-4 text-[13px]`}
+    >
+      <section>
+        <p className="text-[10px] font-medium uppercase tracking-wide text-[var(--muted)]">
+          Catalog feed · JSON
+        </p>
+        <div className="mt-1.5">
+          <Beat
+            status={catalogStatus}
+            text={catalog?.detail}
+            placeholder={`asking the catalog for ${describeMission(mission)}`}
+          />
+        </div>
+      </section>
+      <section>
+        <p className="text-[10px] font-medium uppercase tracking-wide text-[var(--muted)]">
+          Cart API · JSON
+        </p>
+        <div className="mt-1.5">
+          <Beat
+            status={cartStatus}
+            text={plainDetail(cart?.detail)}
+            placeholder="putting that variant id in a cart and reading the cart back"
+          />
+          {cartResolved && observedCart ? (
+            <CartLines cart={observedCart} failed={cartStatus === 'failed'} />
+          ) : null}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+/** The checkpoint a failed lane is captioned with: Gamma's cart beat first, else the first failure. */
+function captionCheckpoint(lane: LaneState, browses: boolean): Checkpoint | undefined {
+  if (!browses) {
+    const cart = lane.checkpoints.find(
+      (c) => c.id === 'catalog_variant_resolves' && c.status === 'failed',
+    );
+    if (cart) return cart;
+  }
+  return lane.checkpoints.find((c) => c.status === 'failed');
+}
+
 function Stage({
   lane,
+  mission,
   snapshots,
   failurePoint,
+  observedCart,
   resolveArtifactUrl,
 }: {
   lane: LaneState;
+  mission: Mission;
   snapshots: Record<string, string>;
   failurePoint?: FailurePoint;
+  observedCart?: ObservedCart;
   resolveArtifactUrl: ScanStepProps['resolveArtifactUrl'];
 }) {
+  const browses = lane.agent.kind !== 'gamma_structured';
   const terminal = isTerminal(lane.status);
   const failed = lane.status === 'failed';
   const lastStep: RunStep | undefined = lane.steps[lane.steps.length - 1];
@@ -450,34 +634,49 @@ function Stage({
   const snapshot = snapshotPath ? snapshots[snapshotPath] : undefined;
   const target =
     shownStep?.action && 'target' in shownStep.action ? shownStep.action.target : undefined;
-  const reason = stepReason(shownStep);
-  const firstFailed = lane.checkpoints.find((c) => c.status === 'failed');
+  const reason = browses ? stepReason(shownStep) : undefined;
+  const caption = failed ? captionCheckpoint(lane, browses) : undefined;
+  const why = !browses && caption ? GAMMA_WHY[caption.id] : undefined;
   const byId = new Map(lane.checkpoints.map((c) => [c.id, c.status] as const));
-  const expected = expectedCheckpoints(true);
+  const expected = expectedCheckpoints(browses);
 
-  const action = terminal
-    ? lane.status === 'passed'
-      ? 'Completed the purchase path'
+  const action = browses
+    ? terminal
+      ? lane.status === 'passed'
+        ? 'Completed the purchase path'
+        : lane.status === 'failed'
+          ? 'Did not complete the purchase path'
+          : 'Stopped'
+      : lane.status === 'verifying'
+        ? 'Checking the cart'
+        : lastStep
+          ? plainAction(lastStep)
+          : 'Opening the store'
+    : lane.status === 'passed'
+      ? 'The product data checks out'
       : lane.status === 'failed'
-        ? 'Did not complete the purchase path'
-        : 'Stopped'
-    : lane.status === 'verifying'
-      ? 'Checking the cart'
-      : lastStep
-        ? plainAction(lastStep)
-        : 'Opening the store';
+        ? 'Found a problem in the product data'
+        : terminal
+          ? 'Stopped'
+          : lane.status === 'verifying'
+            ? 'Trying the cart API'
+            : 'Reading the catalog feed';
 
   return (
     <div className="stage-grid grid h-full min-h-0 grid-cols-1 gap-6 md:grid-cols-[minmax(0,1fr)_300px]">
       <div className="flex min-h-0 min-w-0 items-start">
-        <PerceptionPanel
-          kind={lane.agent.kind}
-          shotUrl={shotUrl}
-          snapshot={snapshot}
-          target={target}
-          failed={failed}
-          running={lane.status === 'running'}
-        />
+        {browses ? (
+          <PerceptionPanel
+            kind={lane.agent.kind}
+            shotUrl={shotUrl}
+            snapshot={snapshot}
+            target={target}
+            failed={failed}
+            running={lane.status === 'running'}
+          />
+        ) : (
+          <DataPanel lane={lane} mission={mission} observedCart={observedCart} failed={failed} />
+        )}
       </div>
 
       <div className="flex min-h-0 min-w-0 flex-col overflow-hidden">
@@ -486,12 +685,18 @@ function Stage({
           <SenseIcons kind={lane.agent.kind} size={13} />
           <span className="rounded bg-[var(--panel-2)] px-1.5 py-0.5 text-[11px] text-[var(--muted)]">
             {lane.agent.kind === BENCHMARK_KIND ? 'benchmark shopper · ' : ''}
+            {!browses ? 'catalog check · ' : ''}
             {shortModel(lane.agent.model)}
           </span>
         </div>
         <p className="scan-descriptor mt-0.5 text-[13px] text-[var(--muted)]">
           {DESCRIPTOR[lane.agent.kind]}
         </p>
+        {!browses ? (
+          <p className="scan-descriptor mt-1 text-[12px] leading-snug text-[var(--muted)]">
+            {GAMMA_WHAT}
+          </p>
+        ) : null}
 
         {/* Keyed so each new action rises in; no exit, so two lines never overlap mid-fade. */}
         <motion.p
@@ -512,28 +717,43 @@ function Stage({
           </p>
         ) : null}
 
-        {failed && firstFailed ? (
+        {caption ? (
           <div className="mt-3 rounded-md border border-[var(--fail)] bg-[var(--fail-soft)] px-3 py-2 text-[13px] leading-snug">
             <span className="mr-1.5 inline-flex align-middle text-[var(--fail)]">
               <CrossIcon size={12} />
             </span>
-            <span className="font-medium">{CHECKPOINT_LABELS[firstFailed.id]}.</span>{' '}
-            {firstFailed.detail}
+            <span className="font-medium">{CHECKPOINT_LABELS[caption.id]}.</span>{' '}
+            {plainDetail(caption.detail)}
           </div>
+        ) : null}
+        {why ? (
+          <p className="mt-2 text-[12px] leading-snug text-[var(--muted)]">
+            <span className="font-medium text-[var(--foreground)]">Why it matters.</span> {why}
+          </p>
         ) : null}
         {lane.status === 'passed' ? (
           <div className="mt-3 flex items-center gap-1.5 text-[13px]">
             <CheckIcon size={12} />
-            Every checkpoint passed, up to checkout review.
+            {browses
+              ? 'Every checkpoint passed, up to checkout review.'
+              : 'The catalog and the cart agree on every check.'}
           </div>
         ) : null}
 
         <div className="mt-auto pt-4">
-          <Track stage={lane.stage} />
+          <Track stage={lane.stage} browses={browses} />
           <div className="mt-4 flex items-center justify-between gap-3">
             <span className="text-[12px] tabular-nums text-[var(--muted)]">
-              {lane.steps.length} step{lane.steps.length === 1 ? '' : 's'} ·{' '}
-              <span className="text-[var(--foreground)]">{formatUsd(lane.costUsd)}</span> so far
+              {browses ? (
+                <>
+                  {lane.steps.length} step{lane.steps.length === 1 ? '' : 's'} ·{' '}
+                  <span className="text-[var(--foreground)]">{formatUsd(lane.costUsd)}</span> so far
+                </>
+              ) : (
+                <>
+                  no model · <span className="text-[var(--foreground)]">$0</span>
+                </>
+              )}
             </span>
             <div className="flex items-center gap-1.5" aria-label="Checkpoints">
               {expected.map((id) => (
@@ -541,57 +761,11 @@ function Stage({
               ))}
             </div>
           </div>
-          <div className="mt-3">
+          <div className="scan-status mt-3">
             <StatusBadge status={lane.status} />
           </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-/** Gamma: not a shopper. It reads the catalog and the cart API and is done in a blink. */
-function GammaStrip({ lane }: { lane: LaneState }) {
-  const terminal = isTerminal(lane.status);
-  const failed = lane.checkpoints.filter((c) => c.status === 'failed');
-  const passed = lane.checkpoints.filter((c) => c.status === 'passed').length;
-  const first = failed[0];
-  return (
-    <div className="flex items-center gap-3 rounded-md border border-[var(--line)] bg-[var(--panel)] px-3 py-2 text-[13px]">
-      <span className="flex shrink-0 items-center gap-1.5">
-        <span className="text-[var(--muted)]">
-          <BracesIcon size={13} />
-        </span>
-        <span className="font-semibold">Catalog check</span>
-        <span className="text-[11px] text-[var(--muted)]">no model · $0</span>
-      </span>
-      <span className="min-w-0 flex-1 truncate" title={first?.detail}>
-        {!terminal ? (
-          <span className="text-[var(--muted)]">
-            {lane.status === 'queued' ? 'Waiting' : 'Reading the catalog feed and the cart API'}
-          </span>
-        ) : first ? (
-          <>
-            <span className="mr-1.5 inline-flex align-middle text-[var(--fail)]">
-              <CrossIcon size={12} />
-            </span>
-            <span className="font-medium">{CHECKPOINT_LABELS[first.id]}.</span> {first.detail}
-          </>
-        ) : (
-          <>
-            <span className="mr-1.5 inline-flex align-middle">
-              <CheckIcon size={12} />
-            </span>
-            {passed} checks passed
-          </>
-        )}
-      </span>
-      {terminal && first ? (
-        <span className="shrink-0 text-[11px] text-[var(--muted)]">
-          {failed.length > 1 ? `${failed.length - 1} more failed · ` : ''}
-          {passed} passed
-        </span>
-      ) : null}
     </div>
   );
 }
@@ -645,10 +819,8 @@ function Closing({
   );
 }
 
-type FinalCost = { costUsd: number; multiple?: string };
-
 /**
- * Once the report is in, each shopper's exact cost and, for every shopper dearer than the
+ * Once the report is in, each agent's exact cost and, for every shopper dearer than the
  * cheapest, "22× Alpha". The live figures are sums of step usage and can run a little under.
  */
 function finalCosts(
@@ -673,11 +845,9 @@ function finalCosts(
   return out;
 }
 
-/** Step 2: one shopper on stage at a time, all four on the roster, then one line and one button. */
+/** Step 2: one agent on stage at a time, all four on the roster, then one line and one button. */
 export function ScanStep(p: ScanStepProps) {
-  const shoppers = browsingLanes(p.lanes);
-  const gamma = gammaLane(p.lanes);
-  const onStage = stageLane(p.lanes) ?? shoppers[0];
+  const onStage = stageLane(p.lanes) ?? p.lanes[0];
   const next = nextLane(p.lanes);
   const finals = finalCosts(p.costComparison, p.lanes);
   const scale = Math.max(costScale(p.lanes), ...Object.values(finals).map((f) => f.costUsd));
@@ -696,14 +866,14 @@ export function ScanStep(p: ScanStepProps) {
           </h1>
           <p className="scan-subtitle mt-0.5 truncate text-[14px] text-[var(--muted)]">
             {done
-              ? `Three shoppers tried to buy ${describeMission(p.mission)}, one at a time, while the catalog was checked.`
-              : `Three shoppers try to buy ${describeMission(p.mission)}, one at a time. Each one perceives the store differently.`}
+              ? `Three shoppers tried to buy ${describeMission(p.mission)}, one at a time, and Gamma checked your product data against the cart.`
+              : `Three shoppers try to buy ${describeMission(p.mission)}, one at a time, and Gamma checks your product data against the cart.`}
           </p>
         </div>
       </div>
 
-      <ol className="flex gap-3" aria-label="Shoppers">
-        {shoppers.map((lane) => (
+      <ol className="flex gap-3" aria-label="Agents">
+        {p.lanes.map((lane) => (
           <RosterChip
             key={lane.runId}
             lane={lane}
@@ -720,15 +890,6 @@ export function ScanStep(p: ScanStepProps) {
             final={finals[lane.runId]}
           />
         ))}
-        {gamma ? (
-          <RosterChip
-            lane={gamma}
-            role={
-              isTerminal(gamma.status) ? 'done' : gamma.status === 'queued' ? 'waiting' : 'active'
-            }
-            scale={scale}
-          />
-        ) : null}
       </ol>
 
       <div className="stage-frame min-h-0 flex-1">
@@ -753,16 +914,16 @@ export function ScanStep(p: ScanStepProps) {
             >
               <Stage
                 lane={onStage}
+                mission={p.mission}
                 snapshots={p.snapshots}
                 failurePoint={p.failurePoints[onStage.runId]}
+                observedCart={p.observedCarts[onStage.runId]}
                 resolveArtifactUrl={p.resolveArtifactUrl}
               />
             </motion.div>
           ) : null}
         </AnimatePresence>
       </div>
-
-      {gamma ? <GammaStrip lane={gamma} /> : null}
     </div>
   );
 }

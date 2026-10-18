@@ -112,7 +112,8 @@ body:has([data-theme='light']) > header {
 @media (max-height: 680px) {
   .scan-root .scan-subtitle,
   .scan-root .scan-reason,
-  .scan-root .scan-descriptor {
+  .scan-root .scan-descriptor,
+  .scan-root .scan-status {
     display: none;
   }
   .scan-root .scan-action {
