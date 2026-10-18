@@ -37,7 +37,7 @@ pnpm install && pnpm playwright:install
 cp .env.example .env            # add ANTHROPIC_API_KEY and the AGENTPROOF_GITHUB_APP_* lines
 STOREFRONT_PORT=5050 pnpm dev:store              # macOS holds :5000 (AirPlay)
 set -a; . ./.env; set +a; STOREFRONT_URL=http://localhost:5050 pnpm dev:runner   # see the tsx watch note below
-pnpm dev:web                                      # http://localhost:3000 (Gamma flow + repository connection today)
+pnpm dev:web                                      # http://localhost:3000: the four-step flow, wired to the runner (?mission=<id> resumes one); the Gamma page at /gamma; the fixture sandbox at /design/flow
 pnpm typecheck && pnpm test && pnpm format:check  # what CI runs; 885 tests
 ```
 

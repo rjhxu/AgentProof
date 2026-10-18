@@ -31,7 +31,7 @@ pnpm dev
 
 | Service    | URL                   | What                                                                                  |
 | ---------- | --------------------- | ------------------------------------------------------------------------------------- |
-| Dashboard  | http://localhost:3000 | Next.js mission control (today: the Gamma demo flow)                                  |
+| Dashboard  | http://localhost:3000 | Next.js dashboard: the four-step flow; the first-pass Gamma demo stays at `/gamma`    |
 | Runner API | http://localhost:4000 | Fastify orchestrator (`/health`, `/missions`, `/runs/:id/events`, `/artifacts/*`)     |
 | Storefront | http://localhost:5000 | "Northwind Threads", the synthetic store with five planted bugs and a control product |
 
