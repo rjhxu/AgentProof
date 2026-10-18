@@ -123,6 +123,21 @@ export function Flow(p: FlowProps) {
 
   const summary = useMemo(() => summarize(p.report), [p.report]);
   const thesis = useMemo(() => thesisLine(p.report), [p.report]);
+  // Where each step's frame and snapshot live, for walking back through a run after the scan.
+  const stepArtifacts = useMemo(
+    () =>
+      Object.fromEntries(
+        p.runs.map((r) => [
+          r.runId,
+          r.steps.map((s) => ({
+            index: s.index,
+            screenshotPath: s.screenshotPath,
+            snapshotPath: s.snapshotPath,
+          })),
+        ]),
+      ),
+    [p.runs],
+  );
   const cards = useMemo(
     () => buildCards(p.report, p.runs, p.problems, p.frames),
     [p.report, p.runs, p.problems, p.frames],
@@ -234,6 +249,7 @@ export function Flow(p: FlowProps) {
                 snapshots={p.snapshots}
                 failurePoints={p.failurePoints}
                 observedCarts={p.observedCarts}
+                stepArtifacts={stepArtifacts}
                 resolveArtifactUrl={resolveArtifactUrl}
                 onContinue={() => dispatch({ type: 'CONTINUE' })}
               />

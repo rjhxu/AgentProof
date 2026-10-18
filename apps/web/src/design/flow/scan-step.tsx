@@ -43,7 +43,15 @@ import {
   TextLinesIcon,
 } from './icons';
 import { ScanMark } from './illustrations';
-import { costScale, nextLane, stageLane } from './stage';
+import {
+  costScale,
+  laneAtReview,
+  nextLane,
+  reviewLabel,
+  reviewLength,
+  stageLane,
+  type StepArtifact,
+} from './stage';
 
 export type ScanStepProps = {
   mission: Mission;
@@ -63,6 +71,8 @@ export type ScanStepProps = {
   failurePoints: Record<string, FailurePoint>;
   /** Run id -> the cart the verifier observed, for the data check's stage. */
   observedCarts: Record<string, ObservedCart>;
+  /** Run id -> where each step's frame and snapshot live, for walking back through a run. */
+  stepArtifacts: Record<string, StepArtifact[]>;
   resolveArtifactUrl: (path: string | undefined) => string | undefined;
   onContinue: () => void;
 };
@@ -248,6 +258,8 @@ function RosterChip({
   role,
   scale,
   final,
+  selected = false,
+  onSelect,
 }: {
   lane: LaneState;
   role: RosterRole;
@@ -255,6 +267,10 @@ function RosterChip({
   scale: number;
   /** From the report once the scan is done: the exact cost and "22× Alpha". */
   final?: FinalCost;
+  /** This agent is the one under review. */
+  selected?: boolean;
+  /** Once the scan is done, a chip opens that agent's review. */
+  onSelect?: () => void;
 }) {
   const browses = lane.agent.kind !== 'gamma_structured';
   const cost = final?.costUsd ?? lane.costUsd;
@@ -263,10 +279,21 @@ function RosterChip({
     <li
       className={[
         'relative min-w-0 flex-1 rounded-md border bg-[var(--background)] px-3 py-2',
-        role === 'active' ? 'border-[var(--accent)]' : 'border-[var(--line)]',
+        role === 'active' || selected ? 'border-[var(--accent)]' : 'border-[var(--line)]',
         role === 'waiting' ? 'opacity-60' : '',
+        onSelect && !selected ? 'hover:border-[var(--line-strong)]' : '',
       ].join(' ')}
     >
+      {onSelect ? (
+        <button
+          type="button"
+          onClick={onSelect}
+          aria-pressed={selected}
+          aria-label={`Look back at ${shortName(lane.agent.name)}`}
+          title={`Look back at ${shortName(lane.agent.name)}`}
+          className="absolute inset-0 z-10 cursor-pointer rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+        />
+      ) : null}
       {role === 'active' ? (
         <motion.span
           className="pointer-events-none absolute -inset-px rounded-md border border-[var(--accent)]"
@@ -612,6 +639,7 @@ function Stage({
   failurePoint,
   observedCart,
   resolveArtifactUrl,
+  review = false,
 }: {
   lane: LaneState;
   mission: Mission;
@@ -619,6 +647,8 @@ function Stage({
   failurePoint?: FailurePoint;
   observedCart?: ObservedCart;
   resolveArtifactUrl: ScanStepProps['resolveArtifactUrl'];
+  /** Looking back after the scan: the lane is rebuilt at a step, so no live status chip. */
+  review?: boolean;
 }) {
   const browses = lane.agent.kind !== 'gamma_structured';
   const terminal = isTerminal(lane.status);
@@ -761,11 +791,98 @@ function Stage({
               ))}
             </div>
           </div>
-          <div className="scan-status mt-3">
-            <StatusBadge status={lane.status} />
-          </div>
+          {review ? null : (
+            <div className="scan-status mt-3">
+              <StatusBadge status={lane.status} />
+            </div>
+          )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Above the stage while looking back: who, which step, and a scrubber through the process. */
+function ReviewBar({
+  lane,
+  position,
+  onPosition,
+  onClose,
+}: {
+  lane: LaneState;
+  position: number;
+  onPosition: (position: number) => void;
+  onClose: () => void;
+}) {
+  const length = reviewLength(lane);
+  const last = length - 1;
+  const browses = lane.agent.kind !== 'gamma_structured';
+  const step = browses && position < last ? lane.steps[position] : undefined;
+  const label = reviewLabel(lane, position);
+  const arrow =
+    'flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-[var(--line)] text-[var(--foreground)] transition hover:border-[var(--line-strong)] disabled:opacity-30 disabled:hover:border-[var(--line)]';
+  return (
+    <div className="flex items-center gap-3 rounded-md border border-[var(--line)] bg-[var(--panel)] px-3 py-2 text-[13px]">
+      <button
+        type="button"
+        className={arrow}
+        disabled={position <= 0}
+        onClick={() => onPosition(position - 1)}
+        aria-label="Previous step"
+      >
+        <ArrowRightIcon size={14} className="rotate-180" />
+      </button>
+      <span className="min-w-0 flex-1 truncate">
+        <span className="font-semibold">{shortName(lane.agent.name)}</span>
+        <span className="text-[var(--muted)]"> · {label}</span>
+        {step ? <span> · {plainAction(step)}</span> : null}
+      </span>
+      <ol className="flex shrink-0 items-center gap-1.5" aria-label="Positions">
+        {Array.from({ length }, (_, i) => {
+          const verdict = i === last;
+          const failed = lane.status !== 'passed';
+          return (
+            <li key={i}>
+              <button
+                type="button"
+                onClick={() => onPosition(i)}
+                aria-label={reviewLabel(lane, i)}
+                aria-current={i === position ? 'step' : undefined}
+                title={reviewLabel(lane, i)}
+                className={[
+                  'block rounded-full transition',
+                  verdict ? 'h-3 w-3' : 'h-2.5 w-2.5',
+                  i === position
+                    ? 'bg-[var(--accent)]'
+                    : verdict
+                      ? failed
+                        ? 'bg-[var(--fail)]'
+                        : 'bg-[var(--foreground)]'
+                      : i < position
+                        ? 'bg-[var(--foreground)]'
+                        : 'border border-[var(--line-strong)]',
+                ].join(' ')}
+              />
+            </li>
+          );
+        })}
+      </ol>
+      <button
+        type="button"
+        className={arrow}
+        disabled={position >= last}
+        onClick={() => onPosition(position + 1)}
+        aria-label="Next step"
+      >
+        <ArrowRightIcon size={14} />
+      </button>
+      <button
+        type="button"
+        onClick={onClose}
+        className="shrink-0 text-[var(--muted)] underline-offset-4 hover:underline"
+      >
+        Back to results
+      </button>
     </div>
   );
 }
@@ -776,12 +893,15 @@ function Closing({
   matrix,
   agents,
   onContinue,
+  onReview,
 }: {
   summary: ScanSummary;
   thesis?: string;
   matrix?: MissionReport['matrix'];
   agents: Array<{ kind: AgentKind; name: string }>;
   onContinue: () => void;
+  /** Opens the first agent's review. */
+  onReview?: () => void;
 }) {
   return (
     <motion.section
@@ -805,6 +925,15 @@ function Closing({
         See what we found
         <ArrowRightIcon />
       </button>
+      {onReview ? (
+        <button
+          type="button"
+          onClick={onReview}
+          className="mt-4 text-sm text-[var(--muted)] underline-offset-4 hover:underline"
+        >
+          Look back at how each agent did it
+        </button>
+      ) : null}
       {matrix ? (
         <details className="mt-5 w-full max-w-[880px] text-left">
           <summary className="cursor-pointer text-center text-sm text-[var(--muted)]">
@@ -845,7 +974,13 @@ function finalCosts(
   return out;
 }
 
-/** Step 2: one agent on stage at a time, all four on the roster, then one line and one button. */
+type Review = { runId: string; position: number };
+
+/**
+ * Step 2: one agent on stage at a time, all four on the roster, then one line and one button.
+ * Once the scan is done, any roster chip opens that agent's review: the same stage, rebuilt at
+ * each step of its process, with a scrubber and the arrow keys.
+ */
 export function ScanStep(p: ScanStepProps) {
   const onStage = stageLane(p.lanes) ?? p.lanes[0];
   const next = nextLane(p.lanes);
@@ -853,6 +988,30 @@ export function ScanStep(p: ScanStepProps) {
   const scale = Math.max(costScale(p.lanes), ...Object.values(finals).map((f) => f.costUsd));
   const agents = p.lanes.map((l) => ({ kind: l.agent.kind, name: l.agent.name }));
   const done = p.phase === 'done';
+
+  const [review, setReview] = useState<Review | null>(null);
+  const reviewLane = review ? p.lanes.find((l) => l.runId === review.runId) : undefined;
+  useEffect(() => {
+    if (!done) setReview(null);
+  }, [done]);
+  const openReview = (lane: LaneState) => setReview({ runId: lane.runId, position: 0 });
+  const moveReview = (position: number) => {
+    if (!reviewLane) return;
+    const clamped = Math.min(reviewLength(reviewLane) - 1, Math.max(0, position));
+    setReview({ runId: reviewLane.runId, position: clamped });
+  };
+  useEffect(() => {
+    if (!review || !reviewLane) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowRight') moveReview(review.position + 1);
+      else if (e.key === 'ArrowLeft') moveReview(review.position - 1);
+      else if (e.key === 'Escape') setReview(null);
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
 
   return (
     <div className="scan-root flex flex-col gap-4">
@@ -888,13 +1047,47 @@ export function ScanStep(p: ScanStepProps) {
             }
             scale={scale}
             final={finals[lane.runId]}
+            selected={review?.runId === lane.runId}
+            onSelect={done ? () => openReview(lane) : undefined}
           />
         ))}
       </ol>
 
+      {done && review && reviewLane ? (
+        <ReviewBar
+          lane={reviewLane}
+          position={review.position}
+          onPosition={moveReview}
+          onClose={() => setReview(null)}
+        />
+      ) : null}
+
       <div className="stage-frame min-h-0 flex-1">
         <AnimatePresence mode="wait" initial={false}>
-          {done && p.summary ? (
+          {done && review && reviewLane ? (
+            <motion.div
+              key={`review-${review.runId}`}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.25 }}
+              className="h-full min-h-0"
+            >
+              <Stage
+                lane={laneAtReview(
+                  reviewLane,
+                  p.stepArtifacts[reviewLane.runId] ?? [],
+                  review.position,
+                )}
+                mission={p.mission}
+                snapshots={p.snapshots}
+                failurePoint={p.failurePoints[reviewLane.runId]}
+                observedCart={p.observedCarts[reviewLane.runId]}
+                resolveArtifactUrl={p.resolveArtifactUrl}
+                review
+              />
+            </motion.div>
+          ) : done && p.summary ? (
             <Closing
               key="closing"
               summary={p.summary}
@@ -902,6 +1095,7 @@ export function ScanStep(p: ScanStepProps) {
               matrix={p.matrix}
               agents={agents}
               onContinue={p.onContinue}
+              onReview={p.lanes[0] ? () => openReview(p.lanes[0]!) : undefined}
             />
           ) : onStage ? (
             <motion.div
