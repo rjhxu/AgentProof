@@ -7,6 +7,7 @@ export * from './targets';
 export * from './prompts';
 export * from './actions';
 export * from './mission-generator';
+export * from './mission-derive';
 export * from './browser-agent';
 export * from './gamma';
 export * from './report';
