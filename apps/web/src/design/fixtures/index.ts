@@ -8,6 +8,9 @@ import {
 import type { AgentKind } from '@agentproof/shared';
 import { z } from 'zod';
 
+import { CodeFixPreview } from '../flow/fixes-data';
+
+import codefixesABuggedJson from './codefixes-a-bugged.json';
 import issueAlphaABuggedJson from './issue-alpha-a-bugged.json';
 import issueGammaABuggedJson from './issue-gamma-a-bugged.json';
 import missionABuggedJson from './mission-a-bugged.json';
@@ -100,6 +103,16 @@ export function resolveDesignArtifact(path: string | undefined): string | undefi
 export const snapshotsABugged: Record<string, string> = z
   .record(z.string(), z.string())
   .parse(snapshotsABuggedJson);
+
+/**
+ * HAND-WRITTEN. What the code-fix agent reports about each fix beyond its diff, keyed by issue
+ * id: the seven validation checks, the reviewer's second opinion, the delivery before and
+ * after "open draft pull requests". Mirrors the `CodeFix` record's `validation`, `review` and
+ * `delivery` fields; no fix has been recorded through the runner on this repository yet.
+ */
+export const codefixesABugged: Record<string, CodeFixPreview> = z
+  .record(z.string(), CodeFixPreview)
+  .parse(codefixesABuggedJson);
 
 /**
  * The two problems on the bugged Bug A mission, composed from the recorded reports.

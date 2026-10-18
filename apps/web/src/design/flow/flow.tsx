@@ -19,6 +19,7 @@ import { useReplay } from '../replay/use-replay';
 import { DevControls } from './dev-controls';
 import { buildProblems, orderProblems } from './findings-data';
 import { FindingsStep } from './findings-step';
+import type { CodeFixPreview } from './fixes-data';
 import { FixesStep } from './fixes-step';
 import { initialFlow, reduceFlow, stepIndex, type FlowStep } from './flow-machine';
 import { ScanStep } from './scan-step';
@@ -40,6 +41,8 @@ export type FlowProps = {
   failurePoints: Record<string, FailurePoint>;
   /** Run id -> the cart the verifier observed, from each report. */
   observedCarts: Record<string, ObservedCart>;
+  /** Issue id -> the checks, the second opinion and the delivery of its fix. */
+  codefixes: Record<string, CodeFixPreview>;
   initial: { step: FlowStep; speed: number; t: number | 'end' | null };
 };
 
@@ -214,6 +217,7 @@ export function Flow(p: FlowProps) {
                 repository={p.repository}
                 phase={state.phase}
                 fixes={problems}
+                codefixes={p.codefixes}
                 readMs={READ_MS}
               />
             )}

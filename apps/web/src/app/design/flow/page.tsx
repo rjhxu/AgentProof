@@ -1,6 +1,7 @@
 import { Flow } from '@/design/flow/flow';
 import { FLOW_STEPS, type FlowStep } from '@/design/flow/flow-machine';
 import {
+  codefixesABugged,
   missionABugged,
   problemsABugged,
   repositoryA,
@@ -63,6 +64,7 @@ export default async function FlowPage({ searchParams }: { searchParams: Promise
         report={missionABugged}
         runs={runs}
         problems={problemsABugged}
+        codefixes={codefixesABugged}
         repository={repositoryA}
         script={script}
         mission={missionABugged.mission}

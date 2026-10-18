@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  codefixesABugged,
   missionABugged,
   missionAFixed,
   missionControl,
@@ -84,5 +85,27 @@ describe('design fixtures', () => {
       expect(repair.files.every((f) => f.startsWith('apps/storefront/'))).toBe(true);
     }
     expect(repositoryA.files.length).toBe(repositoryA.fileCount);
+  });
+
+  it('every problem has a composed code fix with all seven checks and a pull request to open', () => {
+    for (const { issue } of problemsABugged) {
+      const preview = codefixesABugged[issue.id];
+      expect(preview).toBeDefined();
+      expect(preview!.checks.map((c) => c.id).sort()).toEqual(
+        [
+          'applies_cleanly',
+          'content_policy',
+          'no_dependency_changes',
+          'paths_in_scope',
+          'rematch',
+          'size_within_bounds',
+          'typecheck',
+        ].sort(),
+      );
+      expect(preview!.delivery.status).toBe('not_requested');
+      expect(preview!.opened?.status).toBe('delivered');
+      expect(preview!.opened?.draft).toBe(true);
+    }
+    expect(repositoryA.accessVia).toBe('github_app');
   });
 });
