@@ -36,8 +36,9 @@ function page(title: string, body: string): string {
 
 /**
  * GitHub App registration and status (docs/CODEFIX.md section 2). Localhost only, like the
- * repository connection. The private key returned by GitHub's manifest conversion is written to
- * data/github-app.json (mode 0600) and never rendered or returned.
+ * repository connection. The private key returned by GitHub's manifest conversion is written
+ * into `.env` (AGENTPROOF_GITHUB_APP_*; the file is made mode 0600) and never rendered or
+ * returned.
  *
  *   GET /github/app            status: configured, app id, slug, install URL (never the key)
  *   GET /github/app/setup      a page with one button that registers the app from a manifest
@@ -112,7 +113,7 @@ export async function registerGitHubAppRoutes(app: FastifyInstance): Promise<voi
           .send(
             page(
               'GitHub App registered',
-              `<h1>GitHub App registered</h1><p>App <strong>${escapeHtml(slug || String(registered.appId))}</strong> (id ${registered.appId}) is now the runner's identity. Its private key was saved to <code>data/github-app.json</code> with owner-only permissions and will not be shown.</p><p>Next: <a href="${escapeHtml(install)}">install the app on the repositories AgentProof may work on</a>. Grant only the repositories you choose; the app asks for Contents and Pull requests (read and write) and Metadata (read).</p><p>App settings: <a href="${escapeHtml(htmlUrl)}">${escapeHtml(htmlUrl)}</a></p>`,
+              `<h1>GitHub App registered</h1><p>App <strong>${escapeHtml(slug || String(registered.appId))}</strong> (id ${registered.appId}) is now the runner's identity. Its id and private key were written to <code>.env</code> as <code>AGENTPROOF_GITHUB_APP_*</code> (owner-only permissions) and will not be shown. Share <code>.env</code> with teammates the way you share the model key, never through git.</p><p>Next: <a href="${escapeHtml(install)}">install the app on the repositories AgentProof may work on</a>. Grant only the repositories you choose; the app asks for Contents and Pull requests (read and write) and Metadata (read).</p><p>App settings: <a href="${escapeHtml(htmlUrl)}">${escapeHtml(htmlUrl)}</a></p>`,
             ),
           );
       } catch (err) {

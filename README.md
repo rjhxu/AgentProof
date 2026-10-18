@@ -12,6 +12,7 @@ Built for DubHacks 2026 (Visa Reimagine Shopping track).
 - Live validation results, bugged and fixed store: [docs/RESULTS.md](docs/RESULTS.md)
 - The five planted bugs and their fixes: [docs/storefront/bugs-and-fixes.md](docs/storefront/bugs-and-fixes.md)
 - The code-fix agent, its trust rules and GitHub access: [docs/CODEFIX.md](docs/CODEFIX.md); what it did live: [docs/CODEFIX-RESULTS.md](docs/CODEFIX-RESULTS.md)
+- **Team handoff: what exists, how to test it, what to do next: [docs/HANDOFF.md](docs/HANDOFF.md)**
 - What is left and who does it: [docs/WORKPLAN.md](docs/WORKPLAN.md)
 - Demo runbook: [docs/DEMO.md](docs/DEMO.md)
 - Team conventions and ownership: [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)

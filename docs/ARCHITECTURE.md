@@ -107,7 +107,6 @@ data/
     cli/<runId>/                     the same, for `pnpm cli` runs
     scripted/<runId>/                the same, for the scripted harness
   repositories/<id>/                 shallow bare clones from the repository connection (<id>.work: a worktree while a fix runs)
-  github-app.json                    the GitHub App id and private key from the manifest flow (mode 0600; never served)
 ```
 
 `Evidence.path` and the report paths are relative to `data/artifacts`; the runner serves them at `GET /artifacts/*`.

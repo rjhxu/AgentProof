@@ -2,7 +2,7 @@
 
 Owners: **Zach** (browser agents, LLM layer, reports, dashboard, demo), **Ryan** (storefront, bug scenarios, the standalone store repo), **Vihan** (runner, verification, Gamma, diagnosis, repair, the code-fix agent).
 
-> Updated 2026-10-18, after PR #4 merged the agents into `main` and the live validation in [RESULTS.md](./RESULTS.md). Deadlines ([TRACKS.md](./TRACKS.md)): Devpost draft Saturday 10:30 PM, final submission Sunday 10:00 AM, judging Sunday 11:30 AM.
+> Updated 2026-10-18, after PR #4 merged the agents into `main` and the live validation in [RESULTS.md](./RESULTS.md); the code-fix agent landed with PR #6. Start from [HANDOFF.md](./HANDOFF.md). Deadlines ([TRACKS.md](./TRACKS.md)): Devpost draft Saturday 10:30 PM, final submission Sunday 10:00 AM, judging Sunday 11:30 AM.
 
 ## Delivered
 

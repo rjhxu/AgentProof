@@ -78,7 +78,7 @@ Totals for the five scenarios end to end: fixes $0.0141 (10 Haiku calls), the fa
 
 ## GitHub App
 
-Registered by the owner through the one-click manifest flow (GitHub rejected a first manifest because an inactive webhook still needs a public URL, so the manifest now carries no webhook block, and it required sudo-mode confirmation, which only the account owner can give). The app `agentproof-fcb9` (id 5365747) is installed on the `rjhxu` account (installation 172611536), and the runner loads its key from `data/github-app.json` (mode 0600, now gitignored).
+Registered by the owner through the one-click manifest flow (GitHub rejected a first manifest because an inactive webhook still needs a public URL, so the manifest now carries no webhook block, and it required sudo-mode confirmation, which only the account owner can give). The app `agentproof-fcb9` (id 5365747) is installed on the `rjhxu` account (installation 172611536), and the runner loads its id and key from `.env` (the setup flow wrote a JSON file at the time; it now writes `.env` so teammates can share one file).
 
 Live through the app, with no token in any request: the private repository was cloned with an installation token scoped to `contents: read` (`RepositoryConnection.accessVia = github_app`), and a second fix of scenario B pushed its branch and opened draft PR [#6](https://github.com/rjhxu/northwind-storefront/pull/6) with a token scoped to `contents: write` and `pull_requests: write`, each token good for an hour and never stored. One defect surfaced and was fixed on the way: GitHub's current installation tokens are a few hundred characters long and contain dots and hyphens, which the token validators (`TOKEN_PATTERN` in the runner, the request schemas in shared) did not allow.
 
