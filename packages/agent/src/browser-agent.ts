@@ -13,13 +13,13 @@ import {
   type Mission,
   type RunStep,
 } from '@agentproof/shared';
-import { actionDraftJsonSchema, summarizeStep, toAgentAction } from './actions';
+import { actionDraftJsonSchema, summarizeAction, summarizeStep, toAgentAction } from './actions';
 import { getLlm } from './llm';
 import type { LlmClient, LlmEffort, LlmResponse } from './llm-types';
 import { checkAction, hostIsAllowed, isPaymentControl, type PolicyVerdict } from './policy';
 import { AGENT_PROFILES, resolveRunSettings } from './profiles';
 import { TEXT_CHAR_CAP, buildUserTurn, systemPromptFor, type ObservationInput } from './prompts';
-import { ARIA_ROLES, chooseOption, parseTarget, setQuantity, toLocator } from './targets';
+import { ARIA_ROLES, chooseOption, parseTarget, resolveRoleTarget, setQuantity } from './targets';
 
 /**
  * Browser agent loop for Alpha (accessibility tree), Beta (screenshots + coordinates) and Sigma
@@ -460,7 +460,8 @@ export async function act(
       const target = parseTarget(action.target, kind, viewport);
       if (target.kind === 'invalid') throw new Error(`click target ${target.reason}`);
       if (target.kind === 'role') {
-        await toLocator(page, target).click({ timeout: ACTION_TIMEOUT_MS });
+        const locator = await resolveRoleTarget(page, target);
+        await locator.click({ timeout: ACTION_TIMEOUT_MS });
         await settle(page);
       } else {
         const before = page.url();
@@ -475,7 +476,8 @@ export async function act(
       const text = typableText(action.text);
       if (target.kind === 'role') {
         // fill() clears the field first.
-        await toLocator(page, target).fill(text, { timeout: ACTION_TIMEOUT_MS });
+        const locator = await resolveRoleTarget(page, target);
+        await locator.fill(text, { timeout: ACTION_TIMEOUT_MS });
       } else {
         // Click to focus, select whatever is there (a quantity field holds "1"), then type.
         await page.mouse.click(target.x, target.y);
@@ -522,6 +524,17 @@ function errorDetail(err: unknown): string {
   return firstLine.length <= DETAIL_MAX_CHARS
     ? firstLine
     : `${firstLine.slice(0, DETAIL_MAX_CHARS - 3)}...`;
+}
+
+const STUCK_SUMMARY_MAX_CHARS = 300;
+
+/** The run's fail summary once the stuck cutoff is hit: what was attempted last, and why it failed. */
+function stuckSummary(step: RunStep): string {
+  const what = step.action ? summarizeAction(step.action) : '(no action)';
+  const text = `stuck: ${STUCK_STEP_LIMIT} consecutive failed steps; last: ${what} -> ${step.outcomeDetail ?? step.outcome}`;
+  return text.length <= STUCK_SUMMARY_MAX_CHARS
+    ? text
+    : `${text.slice(0, STUCK_SUMMARY_MAX_CHARS - 3)}...`;
 }
 
 const stepFile = (index: number, suffix: string): string =>
@@ -728,7 +741,7 @@ export async function runBrowserAgent(
       if (ending) return ending;
       stuck = step.outcome === 'ok' ? 0 : stuck + 1;
       if (stuck >= STUCK_STEP_LIMIT) {
-        return { outcome: 'fail', summary: `stuck: ${step.outcomeDetail ?? step.outcome}` };
+        return { outcome: 'fail', summary: stuckSummary(step) };
       }
     }
     return { outcome: 'step_limit', summary: 'step limit reached' };

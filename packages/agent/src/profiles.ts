@@ -97,10 +97,17 @@ export const AGENT_PROFILES: Record<AgentKind, AgentProfile> = {
   },
 };
 
-/** Non-agent model roles: report narration and mission generation. */
-export const ROLE_MODELS: Record<'narrator' | 'mission', { xai: string; anthropic: string }> = {
+/**
+ * Non-agent model roles: report narration, mission generation, and diagnosis (packages/diagnostics
+ * and the future code-fix agent). Every default is cheap; nothing defaults to Opus.
+ */
+export const ROLE_MODELS: Record<
+  'narrator' | 'mission' | 'diagnosis',
+  { xai: string; anthropic: string }
+> = {
   narrator: { xai: 'grok-4.20-0309-non-reasoning', anthropic: 'claude-haiku-5-5' },
   mission: { xai: 'grok-4.3', anthropic: 'claude-haiku-5-5' },
+  diagnosis: { xai: 'grok-4.3', anthropic: 'claude-haiku-5-5' },
 };
 
 export type ModelRole = AgentKind | keyof typeof ROLE_MODELS;
@@ -112,6 +119,7 @@ const ROLE_ENV_SUFFIX: Record<ModelRole, string> = {
   gamma_structured: 'GAMMA',
   narrator: 'NARRATOR',
   mission: 'MISSION',
+  diagnosis: 'DIAGNOSIS',
 };
 
 function envString(name: string): string | undefined {

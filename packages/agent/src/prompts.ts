@@ -1,5 +1,11 @@
-import { AGENT_LABELS, type AgentKind, type Mission, type RunStep } from '@agentproof/shared';
-import { summarizeStep } from './actions';
+import {
+  AGENT_LABELS,
+  type AgentAction,
+  type AgentKind,
+  type Mission,
+  type RunStep,
+} from '@agentproof/shared';
+import { summarizeAction, summarizeStep } from './actions';
 import type { LlmContentBlock } from './llm-types';
 import { describeTargetGrammar } from './targets';
 
@@ -32,7 +38,7 @@ export const HISTORY_STEPS = 5;
  * How many times the agent may try the same target before the system prompt tells it to move on
  * (the RULES text spells it out as "failed twice, do not try it a third time"). It must stay
  * strictly BELOW the loop's consecutive-error cutoff in browser-agent.ts (five consecutive
- * failed steps end the run as fail, AGENTS-IMPLEMENTATION-PLAN 5.3): if the agent were allowed as
+ * failed steps end the run as fail, docs/AGENTS.md section 8): if the agent were allowed as
  * many attempts as the cutoff, the harness would fail the run before the agent could continue
  * with what the page offers, which is the documented Alpha result on Bug A (size S in the cart,
  * the mismatch recorded by the verifier), not an empty-cart fail. The brief's original "3 times"
@@ -102,8 +108,8 @@ const FLOW_AND_RULES = `TYPICAL FLOW
 RULES
 - NEVER click anything that places an order, pays or submits payment: "Place order", "Pay now", "Buy now", "Confirm purchase", "Submit payment". The checkout review page is as far as you go.
 - Say done only when the mission's success milestone is visibly reached on the current page. done is a claim; a verifier checks the cart afterwards.
-- ${RETRY_RULE} Reaching the same requirement through another target counts as the same target (select Size = M then click radio:M; type into spinbutton:Quantity then click button:Increase quantity); when you say fail, say what you could not find or perceive.
-- If the cart page shows a different option, quantity or product than you selected, do not clear the cart and start over more than once. On the second contradiction, proceed to the milestone and describe the discrepancy in your reason; the verifier will record what the store sold.
+- ${RETRY_RULE} RUN SUMMARY lists failed attempts per target across the whole run, not only the recent steps; count from it. Reaching the same requirement through another target counts as the same target (select Size = M then click radio:M; type into spinbutton:Quantity then click button:Increase quantity); when you say fail, say what you could not find or perceive.
+- If the cart page shows a different option, quantity or product than you selected, you may clear the cart and start over at most once per run. RUN SUMMARY counts your clears: when it shows 1 or more, never clear again; proceed to the milestone and describe the discrepancy in your reason; the verifier will record what the store sold.
 - If the quantity cannot be set after two attempts (no usable spinbutton or increase button), add the item with the page's default quantity and continue to the milestone; say so in your reason. Never spend a third step on the quantity.
 - Never claim you selected or set something you did not.
 - Stay on the store. Use navigate only for URLs on the store's own host.
@@ -113,6 +119,70 @@ RULES
 /** Fixed per kind. Contains no page content, ever. */
 export function systemPromptFor(kind: AgentKind): string {
   return [INTRO, GRAMMAR[kind], FLOW_AND_RULES].join('\n\n');
+}
+
+const CLEAR_CART_NAME = 'clear cart';
+const SUMMARY_MAX_FAILURE_KEYS = 8;
+
+/** True for a click on a `role:name` target whose accessible name is "Clear cart". */
+function isClearCartClick(action: AgentAction): boolean {
+  if (action.type !== 'click') return false;
+  const colon = action.target.indexOf(':');
+  if (colon < 0) return false; // coordinate targets cannot be inspected
+  return (
+    action.target
+      .slice(colon + 1)
+      .trim()
+      .toLowerCase() === CLEAR_CART_NAME
+  );
+}
+
+/** Grouping key for a failed click, type or select; undefined for other actions. */
+function failureKey(action: AgentAction): string | undefined {
+  switch (action.type) {
+    case 'click':
+      return `click ${action.target}`;
+    case 'type':
+      return `type ${action.target}`;
+    case 'select':
+      return summarizeAction(action);
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Deterministic counts over the WHOLE run (not just RECENT STEPS), so the model can tell how many
+ * clears and failed attempts it has already used. Lists counts and target keys only, never the
+ * step text. Always returns the same four lines so the structure of the user turn is stable.
+ */
+export function summarizeRun(history: RunStep[]): string {
+  let clears = 0;
+  const failures = new Map<string, number>();
+  for (const step of history) {
+    const action = step.action;
+    if (!action) continue;
+    if (step.outcome === 'ok') {
+      if (isClearCartClick(action)) clears += 1;
+      continue;
+    }
+    const key = failureKey(action);
+    if (key !== undefined) failures.set(key, (failures.get(key) ?? 0) + 1);
+  }
+  // Array.prototype.sort is stable, so ties keep the order in which they first failed.
+  const ranked = [...failures.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, SUMMARY_MAX_FAILURE_KEYS);
+  const failureLine =
+    ranked.length === 0 ? 'none' : ranked.map(([key, count]) => `${key} x${count}`).join(', ');
+  const clearLine =
+    clears > 0 ? `${clears} time(s); the rules allow one clear per run` : `${clears} time(s)`;
+  return [
+    'RUN SUMMARY (whole run, not just the recent steps)',
+    `steps taken: ${history.length}`,
+    `cart cleared: ${clearLine}`,
+    `failed attempts by target: ${failureLine}`,
+  ].join('\n');
 }
 
 function truncate(s: string, cap: number): string {
@@ -167,6 +237,7 @@ export function buildUserTurn(args: UserTurnArgs): LlmContentBlock[] {
       `STEPS REMAINING: ${stepsRemaining}`,
       'RECENT STEPS',
       recent,
+      summarizeRun(history),
       `TARGET GRAMMAR: ${describeTargetGrammar(kind)}`,
     ].join('\n'),
   });
