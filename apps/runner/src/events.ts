@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import type { RunEvent } from '@agentproof/shared';
+import type { CodeFixEvent, RunEvent } from '@agentproof/shared';
 
 /**
  * In-process pub/sub for run progress. The SSE route subscribes per run id;
@@ -16,4 +16,20 @@ export function publish(event: RunEvent): void {
 export function subscribe(runId: string, listener: (e: RunEvent) => void): () => void {
   bus.on(runId, listener);
   return () => bus.off(runId, listener);
+}
+
+/** The code-fix agent's progress (docs/CODEFIX.md), keyed by codefix id. Same pattern as runs. */
+const codefixBus = new EventEmitter();
+codefixBus.setMaxListeners(100);
+
+export function publishCodeFix(event: CodeFixEvent): void {
+  codefixBus.emit(event.codefixId, event);
+}
+
+export function subscribeCodeFix(
+  codefixId: string,
+  listener: (e: CodeFixEvent) => void,
+): () => void {
+  codefixBus.on(codefixId, listener);
+  return () => codefixBus.off(codefixId, listener);
 }

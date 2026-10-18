@@ -18,6 +18,11 @@ import type {
   GetMissionReportResponse,
   Mission,
   Run,
+  CodeFixEvent,
+  CodeFixRequest,
+  CodeFixResponse,
+  ListCodeFixesResponse,
+  GitHubAppStatusResponse,
 } from '@agentproof/shared';
 
 /**
@@ -111,6 +116,31 @@ export const api = {
       .split('/')
       .map(encodeURIComponent)
       .join('/')}`,
+
+  // ---- the code-fix agent (docs/CODEFIX.md) --------------------------------------------------
+  /**
+   * Start a fix for a failed run with a connected repository. The token in the body, when any,
+   * is used once and never stored. 202 with the record in its `running` state; poll getCodeFix
+   * or subscribeCodeFix for progress.
+   */
+  startCodeFix: (runId: string, body: CodeFixRequest) =>
+    call<CodeFixResponse>(`/runs/${runId}/codefix`, { method: 'POST', body: JSON.stringify(body) }),
+  getCodeFix: (codefixId: string) => call<CodeFixResponse>(`/codefix/${codefixId}`),
+  listCodeFixes: (runId: string) => call<ListCodeFixesResponse>(`/runs/${runId}/codefixes`),
+  /** text/markdown rendering of the record (the same text a pull request body gets). */
+  codeFixMarkdownUrl: (codefixId: string) => `${BASE}/codefix/${codefixId}/report.md`,
+  codeFixPatchUrl: (codefixId: string) => `${BASE}/codefix/${codefixId}/patch.diff`,
+  /** Whether the runner has a GitHub App identity, and where to install it; never the key. */
+  getGitHubApp: () => call<GitHubAppStatusResponse>('/github/app'),
+  /** The one-button registration page (opens in a new tab; GitHub returns to the runner). */
+  gitHubAppSetupUrl: () => `${BASE}/github/app/setup`,
+  /** Live stage/log/done events for a fix; closes after `done`. Browser only. */
+  subscribeCodeFix(codefixId: string, onEvent: (e: CodeFixEvent) => void): () => void {
+    const es = new EventSource(`${BASE}/codefix/${codefixId}/events`);
+    es.onmessage = (msg) => onEvent(JSON.parse(msg.data) as CodeFixEvent);
+    es.onerror = () => es.close();
+    return () => es.close();
+  },
 
   /**
    * Subscribe to live run events. Returns an unsubscribe function. Browser only. The runner ends

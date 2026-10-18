@@ -21,6 +21,8 @@ import { enqueue } from './jobs';
 import { hoodieMission } from '@agentproof/shared/fixtures';
 import { diagnoseGamma, proposeGammaRepair, applyGammaRepair } from './gamma-demo';
 import { registerRepositoryRoutes } from './repository-routes';
+import { registerCodeFixRoutes } from './codefix-routes';
+import { registerGitHubAppRoutes } from './github-app-routes';
 import {
   currentMissionReport,
   missionReportExists,
@@ -83,6 +85,8 @@ function wantsRefresh(query: unknown): boolean {
  */
 export async function registerRoutes(app: FastifyInstance): Promise<void> {
   await registerRepositoryRoutes(app);
+  await registerCodeFixRoutes(app);
+  await registerGitHubAppRoutes(app);
   app.get('/health', async () => ({ ok: true, at: nowIso() }));
 
   // Fixed local mission: no model call or API key needed for the Gamma milestone.

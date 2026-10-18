@@ -36,8 +36,14 @@ import { generateRunReport, regenerateMissionReport } from './reports';
  */
 const queue: string[] = [];
 let active = 0;
+/**
+ * Missions substituted for the stored one while a run executes: the code-fix agent's rematch runs
+ * the same mission against an ephemeral patched store (docs/CODEFIX.md). Never persisted.
+ */
+const missionOverrides = new Map<string, Mission>();
 
-export function enqueue(runId: string): void {
+export function enqueue(runId: string, missionOverride?: Mission): void {
+  if (missionOverride) missionOverrides.set(runId, missionOverride);
   queue.push(runId);
   pump();
 }
@@ -46,9 +52,10 @@ function pump(): void {
   while (active < config.maxConcurrentRuns && queue.length > 0) {
     const runId = queue.shift()!;
     active++;
-    executeRun(runId)
+    executeRun(runId, missionOverrides.get(runId))
       .catch((err) => console.error(`[jobs] run ${runId} crashed`, err))
       .finally(() => {
+        missionOverrides.delete(runId);
         active--;
         pump();
       });
