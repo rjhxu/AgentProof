@@ -67,6 +67,30 @@ describe('replay script', () => {
   });
 });
 
+describe('sequential replay script', () => {
+  const sequential = buildReplayScript(runsABugged, { sequential: true });
+  const reportAt = (runId: string) =>
+    sequential.find((e) => e.event.type === 'report' && e.event.runId === runId)!.at;
+  const startAt = (runId: string) =>
+    sequential.find(
+      (e) => e.event.type === 'status' && e.event.runId === runId && e.event.status === 'running',
+    )!.at;
+
+  it('starts each shopper only after the previous one has reported', () => {
+    for (let i = 1; i < browsing.length; i++) {
+      expect(startAt(browsing[i]!.runId)).toBeGreaterThan(reportAt(browsing[i - 1]!.runId));
+    }
+    expect(startAt(browsing[0]!.runId)).toBe(0);
+  });
+
+  it('keeps Gamma on its own clock and finishes in well under half a minute', () => {
+    expect(startAt(gamma!.runId)).toBeLessThan(startAt(browsing[1]!.runId));
+    const total = scriptDurationMs(sequential);
+    expect(total).toBeGreaterThan(10000);
+    expect(total).toBeLessThan(25000);
+  });
+});
+
 describe('lane reducer', () => {
   it('reproduces every report when the whole script is folded', () => {
     const seeds = runsABugged.map((r) => ({ runId: r.runId, agent: r.agent }));

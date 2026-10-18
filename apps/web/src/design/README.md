@@ -18,7 +18,7 @@ src/design/
   format.ts          formatting and plain-language helpers shared by every screen
   screen-shell.tsx   frame for the first-pass sandbox screens
   components/        first-pass components (status badge, matrix, panels); see its README
-  fixtures/          recorded reports, composed issues and repairs, frames, a typed index
+  fixtures/          recorded reports, the accessibility-tree snapshots they name, composed issues and repairs, frames, a typed index
   replay/            recorded reports -> timed run events -> lane state (the wiring seam)
   flow/              the four-step flow: machine, stepper, one component per step, diff view,
                      illustrations, icons, dev controls

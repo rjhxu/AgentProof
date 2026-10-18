@@ -186,6 +186,99 @@ export function stepNote(step: RunStep): string | undefined {
   return undefined;
 }
 
+/** What a shopper perceives, from its kind. Sigma has every sense and the strongest model. */
+export type Sense = 'reads' | 'looks' | 'strongest' | 'api';
+
+export function senses(kind: AgentKind): Sense[] {
+  switch (kind) {
+    case 'alpha_semantic':
+      return ['reads'];
+    case 'beta_vision':
+      return ['looks'];
+    case 'sigma_hybrid':
+      return ['reads', 'looks', 'strongest'];
+    case 'gamma_structured':
+      return ['api'];
+    default:
+      return [];
+  }
+}
+
+/** The recorded frames are viewport screenshots of this size; click targets are in its pixels. */
+export const FRAME_SIZE = { width: 1280, height: 800 } as const;
+
+/** A coordinate target ("262,300") as percentages of the frame, for a click marker. */
+export function clickPoint(target: string | undefined): { x: number; y: number } | undefined {
+  if (!target || !isCoordinateTarget(target)) return undefined;
+  const [xs, ys] = target.split(',');
+  const x = Number(xs);
+  const y = Number(ys);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return undefined;
+  return {
+    x: Math.min(100, Math.max(0, (x / FRAME_SIZE.width) * 100)),
+    y: Math.min(100, Math.max(0, (y / FRAME_SIZE.height) * 100)),
+  };
+}
+
+/**
+ * The line of an accessibility-tree snapshot that names an agent's target: "link:Black Hoodie"
+ * matches `link "Black Hoodie"`, a bare "Size" matches the first line mentioning Size. -1 when
+ * nothing matches, which on the failing page is the finding itself.
+ */
+export function targetLine(lines: string[], target: string | undefined): number {
+  if (!target || isCoordinateTarget(target)) return -1;
+  const [role, ...rest] = target.split(':');
+  const name = rest.join(':');
+  if (name) {
+    const exact = lines.findIndex((l) => l.includes(`${role} "${name}"`));
+    if (exact >= 0) return exact;
+    return lines.findIndex((l) => l.includes(`"${name}"`));
+  }
+  return lines.findIndex((l) => l.toLowerCase().includes(target.toLowerCase()));
+}
+
+/** The agent's own one-line reason for a step: model-written, shown muted and labelled. */
+export function stepReason(step: RunStep | undefined): string | undefined {
+  const action = step?.action;
+  if (!action) return undefined;
+  if (action.type === 'done') return action.summary;
+  return action.reason;
+}
+
+function multipleWord(m: number | undefined): string {
+  if (!m || m <= 1) return '';
+  return m >= 10 ? `${Math.round(m)}` : `${m.toFixed(1)}`;
+}
+
+/**
+ * The thesis in one sentence, from the cost table: the cheapest shopper should be able to buy;
+ * the strongest one buying at many times the price is the cost of not fixing the store.
+ */
+export function thesisLine(report: MissionReport): string {
+  const rows = report.costComparison;
+  const names = Object.fromEntries(report.runs.map((r) => [r.agentKind, shortName(r.agentName)]));
+  const name = (kind: AgentKind) => names[kind] ?? shortName(kind);
+  const cheapest =
+    rows.find((r) => r.relativeCost === 1) ??
+    [...rows]
+      .filter((r) => (r.estimatedCostUsd ?? 0) > 0)
+      .sort((a, b) => (a.estimatedCostUsd ?? 0) - (b.estimatedCostUsd ?? 0))[0];
+  const strongest =
+    rows.find((r) => r.agentKind === 'sigma_hybrid') ??
+    [...rows].sort((a, b) => (b.estimatedCostUsd ?? 0) - (a.estimatedCostUsd ?? 0))[0];
+  if (!cheapest) return '';
+  if (cheapest.status === 'passed') {
+    return `${name(cheapest.agentKind)}, the cheapest shopper, bought it. Your store works for the cheapest agent.`;
+  }
+  if (strongest && strongest.agentKind !== cheapest.agentKind && strongest.status === 'passed') {
+    const times = multipleWord(strongest.relativeCost);
+    return `${name(strongest.agentKind)} bought it${times ? `, at ${times} times the price` : ''}. Your store should work for ${name(cheapest.agentKind)}.`;
+  }
+  const passed = rows.filter((r) => r.status === 'passed').map((r) => name(r.agentKind));
+  if (passed.length === 0) return 'No shopper completed the purchase.';
+  return `${passed.join(' and ')} completed the purchase; ${name(cheapest.agentKind)}, the cheapest shopper, did not.`;
+}
+
 /** One line per step for the panel's step list. */
 export function describeAction(action: Action | undefined): string {
   if (!action) return 'no action';

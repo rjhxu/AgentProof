@@ -14,6 +14,16 @@ export type ReplayOptions = {
   checkpointGapMs: number;
   /** When an agent with no browser steps (Gamma) reaches its verdict. */
   noBrowserFinishMs: number;
+  /**
+   * One shopper at a time: each browsing lane starts after the previous one's report instead
+   * of all of them at once. Gamma keeps its own timing. The live runner still runs them in
+   * parallel; a sequencer in front of the reducer gives the same order at wiring.
+   */
+  sequential: boolean;
+  /** In sequential mode, the hold between one lane's report and the next lane's start. */
+  laneGapMs: number;
+  /** The same hold after a lane that failed: the freeze frame is the moment worth reading. */
+  failGapMs: number;
 };
 
 export const DEFAULT_REPLAY_OPTIONS: ReplayOptions = {
@@ -22,6 +32,9 @@ export const DEFAULT_REPLAY_OPTIONS: ReplayOptions = {
   verifyDelayMs: 500,
   checkpointGapMs: 60,
   noBrowserFinishMs: 1300,
+  sequential: false,
+  laneGapMs: 1200,
+  failGapMs: 2800,
 };
 
 function median(values: number[]): number {
@@ -68,6 +81,8 @@ export function buildReplayScript(
   const scale = o.stepGapMs / base;
 
   let laneIndex = 0;
+  let previousReportAt = 0;
+  let previousFailed = false;
   for (const report of reports) {
     const runId = report.runId;
     const stamp = report.steps[0]?.at ?? report.generatedAt;
@@ -94,7 +109,11 @@ export function buildReplayScript(
       continue;
     }
 
-    const start = laneIndex * o.laneStaggerMs;
+    const start = o.sequential
+      ? laneIndex === 0
+        ? 0
+        : previousReportAt + (previousFailed ? o.failGapMs : o.laneGapMs)
+      : laneIndex * o.laneStaggerMs;
     laneIndex += 1;
     status(start, 'running');
 
@@ -102,6 +121,20 @@ export function buildReplayScript(
     let t = start;
     report.steps.forEach((step, index) => {
       t += (gaps[index] ?? base) * scale;
+      if (step.snapshotPath) {
+        push(t - 2, {
+          type: 'evidence',
+          runId,
+          evidence: {
+            id: step.snapshotEvidenceId ?? `ev_replay_${runId}_${index}_aria`,
+            runId,
+            kind: 'dom_snapshot',
+            stepIndex: step.index,
+            capturedAt: step.at,
+            path: step.snapshotPath,
+          },
+        });
+      }
       if (step.screenshotPath) {
         push(t - 1, {
           type: 'evidence',
@@ -133,6 +166,8 @@ export function buildReplayScript(
       reportPath: `${runId}/report.json`,
       at: report.generatedAt,
     });
+    previousReportAt = c + 150;
+    previousFailed = report.status !== 'passed';
   }
 
   return events.sort((a, b) => a.at - b.at);
