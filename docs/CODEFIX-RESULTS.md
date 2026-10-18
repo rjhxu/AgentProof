@@ -84,6 +84,21 @@ Live through the app, with no token in any request: the private repository was c
 
 The app code is covered by 79 unit tests (JWT signature verified against the public key, token scoping, 0600 key file, manifest conversion) and by this live run.
 
+## The five pull requests merged together
+
+The five branches merged cleanly into one checkout of the store's `main` (5 files, +10/−10; they touch disjoint files). Served on port 5051, that checkout grades FIXED on every scenario with the control OK (`verify-scenarios.mjs --expect=fixed` exits 0), and the agents pass every mission against it with no change to the agents:
+
+| Mission | Agent | Result                  | Steps | Cost    |
+| ------- | ----- | ----------------------- | ----- | ------- |
+| A       | Alpha | passed, all checkpoints | 7     | $0.0028 |
+| B       | Gamma | passed, all checkpoints | 0     | $0      |
+| C       | Alpha | passed, all checkpoints | 6     | $0.0025 |
+| D       | Alpha | passed, all checkpoints | 8     | $0.0032 |
+| E       | Alpha | passed, all checkpoints | 6     | $0.0025 |
+| Control | Alpha | passed, all checkpoints | 6     | $0.0026 |
+
+This is the "after" half of the thesis on the agent's own fixes rather than the reference patches: the cheapest agent completes every mission once the store is repaired. The pull requests themselves are left as drafts for a human to merge.
+
 ## Reproduce
 
 ```bash
