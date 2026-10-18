@@ -5,6 +5,9 @@ import { motion } from 'motion/react';
 import { FLOW_LABELS, FLOW_STEPS, stepIndex, type FlowStep } from './flow-machine';
 import { CheckIcon } from './icons';
 
+/** One width for the stepper, the error bar and every step. */
+export const FLOW_SHELL = 'mx-auto w-full max-w-[1200px] px-6';
+
 export type StepperProps = {
   current: FlowStep;
   /** Work is in progress on the current step: the active node breathes. */
@@ -18,7 +21,7 @@ export function Stepper({ current, busy, onJump }: StepperProps) {
   const currentIndex = stepIndex(current);
   return (
     <header className="sticky top-0 z-10 h-[var(--stepper-h)] border-b border-[var(--line)] bg-[var(--background)]/90 backdrop-blur">
-      <div className="mx-auto flex h-full max-w-[880px] items-center justify-between px-6">
+      <div className={`${FLOW_SHELL} flex h-full items-center justify-between`}>
         <span className="flex items-center gap-2 text-sm font-semibold tracking-tight">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img

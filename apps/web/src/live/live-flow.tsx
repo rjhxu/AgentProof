@@ -16,14 +16,14 @@ import type {
   Run,
 } from '@agentproof/shared';
 
-import { buildProblems, orderProblems } from '../design/flow/findings-data';
+import { buildProblems, buildRoster, orderProblems } from '../design/flow/findings-data';
 import { FindingsStep } from '../design/flow/findings-step';
 import { CHECK_LABELS, canOpenPullRequests, type CodeFixPreview } from '../design/flow/fixes-data';
 import { FixesStep } from '../design/flow/fixes-step';
 import { initialFlow, reduceFlow, type FlowStep } from '../design/flow/flow-machine';
 import { SpinnerIcon } from '../design/flow/icons';
 import { ScanStep } from '../design/flow/scan-step';
-import { Stepper } from '../design/flow/stepper';
+import { FLOW_SHELL, Stepper } from '../design/flow/stepper';
 import { StoreStep } from '../design/flow/store-step';
 import { summarize, thesisLine } from '../design/format';
 import { api } from '../lib/api';
@@ -108,6 +108,7 @@ export function LiveFlow({ missionId }: { missionId?: string }) {
   const [state, dispatch] = useReducer(reduceFlow, 'store' as FlowStep, (step) =>
     initialFlow(step),
   );
+  const [reviewRunId, setReviewRunId] = useState<string>();
   const [storeError, setStoreError] = useState<string>();
   const [promptVisible, setPromptVisible] = useState(false);
   const [prompt, setPrompt] = useState('');
@@ -238,9 +239,9 @@ export function LiveFlow({ missionId }: { missionId?: string }) {
     }
   }, [state, scan.done, report]);
 
-  // The GitHub App decides whether connecting starts from an install link or a URL.
+  // The GitHub App decides whether Fixes starts from an install link or a URL.
   useEffect(() => {
-    if (state.step !== 'findings' || appFetched.current) return;
+    if ((state.step !== 'findings' && state.step !== 'fixes') || appFetched.current) return;
     appFetched.current = true;
     void api
       .getGitHubApp()
@@ -249,8 +250,7 @@ export function LiveFlow({ missionId }: { missionId?: string }) {
   }, [state.step]);
 
   const appRepos = useAppRepositories(
-    state.step === 'findings' &&
-      state.connect !== 'closed' &&
+    (state.step === 'findings' || state.step === 'fixes') &&
       githubApp?.configured === true &&
       githubApp.installUrl !== undefined,
   );
@@ -320,6 +320,37 @@ export function LiveFlow({ missionId }: { missionId?: string }) {
   }, [missionId]);
 
   // ---- store ----------------------------------------------------------------------------------
+  /** Create the runs and open the scan. A scan of this mission that is still going is rejoined. */
+  const startScan = async (current: Mission) => {
+    if (runs.length > 0 && runs.every((r) => r.missionId === current.id) && !scan.allFinished) {
+      dispatch({ type: 'CONFIRMED' });
+      return;
+    }
+    setStarting(true);
+    try {
+      const { runs: started } = await api.startRuns(current.id, { agents: AGENTS });
+      // A new scan: nothing from an earlier one carries over.
+      setReport(undefined);
+      setIssues({});
+      setRepositories({});
+      setConnectError(undefined);
+      setOpenAfterRead(false);
+      autoOpened.current = false;
+      diagnosing.current.clear();
+      settledAtLoad.current.clear();
+      fellBack.current.clear();
+      fixes.reset();
+      setRuns(originalRuns(started));
+      dispatch({ type: 'CONFIRMED' });
+    } catch (err) {
+      // The mission exists: show it so "Start the scan" can try again.
+      dispatch({ type: 'MISSION_DERIVED', mission: current });
+      setStoreError(errorText(err));
+    } finally {
+      setStarting(false);
+    }
+  };
+
   const submitStore = async () => {
     if (state.step !== 'store' || state.phase !== 'idle') return;
     const url = normalizeStoreUrl(state.url);
@@ -337,8 +368,8 @@ export function LiveFlow({ missionId }: { missionId?: string }) {
         ...(promptVisible && text ? { prompt: text } : {}),
       });
       setMission(derived);
-      dispatch({ type: 'MISSION_DERIVED', mission: derived });
       rememberMission(derived.id);
+      await startScan(derived);
     } catch (err) {
       dispatch({ type: 'DERIVE_FAILED' });
       const message = errorText(err);
@@ -379,32 +410,7 @@ export function LiveFlow({ missionId }: { missionId?: string }) {
         return;
       }
     }
-    // A scan of this mission is still running (the user came back to this step): rejoin it.
-    if (runs.length > 0 && runs.every((r) => r.missionId === current.id) && !scan.allFinished) {
-      dispatch({ type: 'CONFIRMED' });
-      return;
-    }
-    setStarting(true);
-    try {
-      const { runs: started } = await api.startRuns(current.id, { agents: AGENTS });
-      // A new scan: nothing from an earlier one carries over.
-      setReport(undefined);
-      setIssues({});
-      setRepositories({});
-      setConnectError(undefined);
-      setOpenAfterRead(false);
-      autoOpened.current = false;
-      diagnosing.current.clear();
-      settledAtLoad.current.clear();
-      fellBack.current.clear();
-      fixes.reset();
-      setRuns(originalRuns(started));
-      dispatch({ type: 'CONFIRMED' });
-    } catch (err) {
-      setStoreError(errorText(err));
-    } finally {
-      setStarting(false);
-    }
+    await startScan(current);
   };
 
   /** Back to an empty address field: the mission, the scan and everything after it are dropped. */
@@ -465,9 +471,13 @@ export function LiveFlow({ missionId }: { missionId?: string }) {
     () => (report ? buildProblems(report, reports, problems, frames, scan.observedCarts) : []),
     [report, reports, problems, frames, scan.observedCarts],
   );
+  const roster = useMemo(() => (report ? buildRoster(report) : []), [report]);
+  const agents = useMemo(
+    () => roster.map((shopper) => ({ kind: shopper.kind, name: shopper.name })),
+    [roster],
+  );
   // Every failed run needs its issue, and every finished run its report (unless the runner never
-  // produced one), before the walkthrough can be built: the step lays out its beats from the cards
-  // it mounts with.
+  // produced one), before Findings can list the problems.
   const findingsPending =
     !report ||
     report.runs.some(
@@ -628,27 +638,45 @@ export function LiveFlow({ missionId }: { missionId?: string }) {
       });
       return;
     }
-    // Back to the scan: show the rest at once; SCAN_FINISHED fires again as soon as it is done.
-    if (step === 'scan') scan.skipToEnd();
+    // Back to the scan: show the rest at once. A finished scan stays on the review.
+    if (step === 'scan') {
+      scan.skipToEnd();
+      dispatch({
+        type: 'JUMP',
+        step,
+        context: scan.done && report ? { scanDone: true } : undefined,
+      });
+      return;
+    }
     dispatch({ type: 'JUMP', step });
+  };
+
+  const reviewShopper = (kind: AgentKind) => {
+    const run = report?.runs.find((r) => r.agentKind === kind);
+    setReviewRunId(run?.runId);
+    scan.skipToEnd();
+    dispatch({ type: 'JUMP', step: 'scan', context: { scanDone: true } });
+  };
+
+  const changeMission = () => {
+    if (!mission) return;
+    setPrompt(mission.rawPrompt);
+    dispatch({
+      type: 'JUMP',
+      step: 'store',
+      context: { url: mission.storeUrl, mission, editing: true },
+    });
   };
 
   const busy =
     (state.step === 'store' && (state.phase === 'deriving' || starting)) ||
     (state.step === 'scan' && state.phase === 'running') ||
-    (state.step === 'findings' && state.connect === 'submitting') ||
-    (state.step === 'fixes' && state.phase === 'reading');
+    (state.step === 'fixes' && (state.phase === 'submitting' || state.phase === 'reading'));
 
   return (
     <MotionConfig reducedMotion="user">
       <Stepper current={state.step} busy={busy} onJump={jump} />
-      <main
-        className={
-          state.step === 'scan'
-            ? 'mx-auto w-full max-w-[1120px] px-6'
-            : 'mx-auto max-w-[880px] px-6 pb-24 pt-12'
-        }
-      >
+      <main className={state.step === 'scan' ? FLOW_SHELL : `${FLOW_SHELL} pb-24 pt-12`}>
         <AnimatePresence mode="wait" initial={false}>
           <motion.section
             key={state.step}
@@ -683,9 +711,6 @@ export function LiveFlow({ missionId }: { missionId?: string }) {
                   mission={mission}
                   lanes={scan.lanes}
                   phase={state.phase}
-                  summary={state.phase === 'done' ? summary : undefined}
-                  thesis={state.phase === 'done' ? thesis : undefined}
-                  matrix={state.phase === 'done' ? report?.matrix : undefined}
                   costComparison={state.phase === 'done' ? report?.costComparison : undefined}
                   snapshots={scan.snapshots}
                   failurePoints={scan.failurePoints}
@@ -693,6 +718,8 @@ export function LiveFlow({ missionId }: { missionId?: string }) {
                   stepArtifacts={scan.stepArtifacts}
                   resolveArtifactUrl={resolveArtifactUrl}
                   onContinue={() => dispatch({ type: 'CONTINUE' })}
+                  onChangeMission={changeMission}
+                  initialReviewRunId={state.phase === 'done' ? reviewRunId : undefined}
                 />
               ) : (
                 <Preparing>Starting the scan</Preparing>
@@ -703,45 +730,71 @@ export function LiveFlow({ missionId }: { missionId?: string }) {
                   summary={summary}
                   thesis={thesis}
                   cards={cards}
-                  connect={state.connect}
-                  connectError={connectError}
-                  app={
-                    githubApp?.configured === true && githubApp.installUrl
-                      ? {
-                          installUrl: githubApp.installUrl,
-                          repositories: appRepos.repositories,
-                          loading: appRepos.loading,
-                          ...(appRepos.error ? { error: appRepos.error } : {}),
-                          onRefresh: () => void appRepos.refresh(),
-                        }
-                      : undefined
-                  }
-                  onOpenConnect={() => dispatch({ type: 'CONNECT_OPENED' })}
-                  onConnect={(request, opts) => void connect(request, opts)}
+                  roster={roster}
+                  matrix={report.matrix}
+                  agents={agents}
+                  onReviewShopper={reviewShopper}
                   onDownload={download}
-                  onContinueToFixes={
-                    repository && fixes.allDiffDone
-                      ? () => dispatch({ type: 'JUMP', step: 'fixes' })
-                      : undefined
+                  fixesReady={Boolean(repository && fixes.allDiffDone)}
+                  onGetFixes={
+                    cards.length === 0
+                      ? undefined
+                      : () => {
+                          if (repository && fixes.allDiffDone) {
+                            dispatch({ type: 'JUMP', step: 'fixes' });
+                          } else if (repository) {
+                            dispatch({
+                              type: 'JUMP',
+                              step: 'fixes',
+                              context: { fixesReading: true },
+                            });
+                          } else {
+                            dispatch({ type: 'CONTINUE' });
+                          }
+                        }
                   }
                 />
               ) : (
                 <Preparing>Preparing the findings</Preparing>
               )
-            ) : repository ? (
+            ) : state.phase === 'reading' || state.phase === 'ready' ? (
+              repository ? (
+                <FixesStep
+                  repository={repository}
+                  phase={state.phase}
+                  fixes={fixesView.list}
+                  codefixes={fixesView.codefixes}
+                  failed={fixesView.failed}
+                  reading={reading}
+                  opening={fixes.opening}
+                  autoOpen={openAfterRead}
+                  onOpen={() => void fixes.openPullRequests()}
+                />
+              ) : (
+                <Preparing>Connecting the repository</Preparing>
+              )
+            ) : (
               <FixesStep
-                repository={repository}
-                phase={state.phase}
+                phase={state.phase === 'submitting' ? 'submitting' : 'connect'}
                 fixes={fixesView.list}
                 codefixes={fixesView.codefixes}
                 failed={fixesView.failed}
-                reading={reading}
                 opening={fixes.opening}
-                autoOpen={openAfterRead}
                 onOpen={() => void fixes.openPullRequests()}
+                onConnect={(request, opts) => void connect(request, opts)}
+                connectError={connectError}
+                app={
+                  githubApp?.configured === true && githubApp.installUrl
+                    ? {
+                        installUrl: githubApp.installUrl,
+                        repositories: appRepos.repositories,
+                        loading: appRepos.loading,
+                        ...(appRepos.error ? { error: appRepos.error } : {}),
+                        onRefresh: () => void appRepos.refresh(),
+                      }
+                    : undefined
+                }
               />
-            ) : (
-              <Preparing>Connecting the repository</Preparing>
             )}
           </motion.section>
         </AnimatePresence>

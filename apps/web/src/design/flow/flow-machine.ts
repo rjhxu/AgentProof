@@ -25,11 +25,21 @@ export type FlowState =
       editing: boolean;
     }
   | { step: 'scan'; phase: 'running' | 'done' }
-  | { step: 'findings'; connect: 'closed' | 'open' | 'submitting' }
-  | { step: 'fixes'; phase: 'reading' | 'ready' };
+  | { step: 'findings' }
+  | { step: 'fixes'; phase: 'connect' | 'submitting' | 'reading' | 'ready' };
 
-/** What a JUMP carries into the store step: the URL already typed, the mission already derived. */
-export type FlowContext = { url?: string; mission?: Mission };
+/**
+ * What a JUMP carries. The store step keeps the URL and the mission, and can open with the
+ * editor already showing. A finished scan lands in review (`scanDone`) instead of replaying.
+ */
+export type FlowContext = {
+  url?: string;
+  mission?: Mission;
+  editing?: boolean;
+  scanDone?: boolean;
+  /** JUMP to Fixes while a connected repository is still being read. */
+  fixesReading?: boolean;
+};
 
 export type FlowEvent =
   | { type: 'URL_CHANGED'; url: string }
@@ -45,17 +55,15 @@ export type FlowEvent =
   | { type: 'REDERIVE' }
   /** derived -> scan running */
   | { type: 'CONFIRMED' }
-  /** scan running -> done */
+  /** scan running -> findings, once the report is in */
   | { type: 'SCAN_FINISHED' }
-  /** scan done -> findings closed */
+  /** scan review -> findings; findings -> fixes connect, before a repository exists */
   | { type: 'CONTINUE' }
-  /** findings closed -> open */
-  | { type: 'CONNECT_OPENED' }
-  /** findings open -> submitting */
+  /** fixes connect -> submitting; the form is already on screen */
   | { type: 'CONNECT_SUBMITTED' }
-  /** findings submitting -> open */
+  /** fixes submitting -> connect, with the form still showing */
   | { type: 'CONNECT_FAILED' }
-  /** findings submitting -> fixes reading */
+  /** fixes submitting -> reading */
   | { type: 'REPOSITORY_CONNECTED' }
   /** fixes reading -> ready */
   | { type: 'REPOSITORY_READ' }
@@ -82,15 +90,15 @@ export function initialFlow(step: FlowStep = 'store', context?: FlowContext): Fl
         url: context?.url ?? mission?.storeUrl ?? '',
         phase: mission ? 'derived' : 'idle',
         ...(mission ? { mission } : {}),
-        editing: false,
+        editing: context?.editing ?? false,
       };
     }
     case 'scan':
-      return { step: 'scan', phase: 'running' };
+      return { step: 'scan', phase: context?.scanDone ? 'done' : 'running' };
     case 'findings':
-      return { step: 'findings', connect: 'closed' };
+      return { step: 'findings' };
     case 'fixes':
-      return { step: 'fixes', phase: 'ready' };
+      return { step: 'fixes', phase: context?.fixesReading ? 'reading' : 'ready' };
   }
 }
 
@@ -121,34 +129,36 @@ export function reduceFlow(state: FlowState, event: FlowEvent): FlowState {
             ? { ...state, phase: 'deriving', editing: false }
             : state;
         case 'CONFIRMED':
-          return state.phase === 'derived' ? { step: 'scan', phase: 'running' } : state;
+          return state.phase === 'derived' || state.phase === 'deriving'
+            ? { step: 'scan', phase: 'running' }
+            : state;
         default:
           return state;
       }
     case 'scan':
       switch (event.type) {
         case 'SCAN_FINISHED':
-          return { step: 'scan', phase: 'done' };
+          return state.phase === 'running' ? { step: 'findings' } : state;
         case 'CONTINUE':
-          return state.phase === 'done' ? { step: 'findings', connect: 'closed' } : state;
+          return state.phase === 'done' ? { step: 'findings' } : state;
         default:
           return state;
       }
     case 'findings':
       switch (event.type) {
-        case 'CONNECT_OPENED':
-          return state.connect === 'closed' ? { step: 'findings', connect: 'open' } : state;
-        case 'CONNECT_SUBMITTED':
-          return state.connect === 'open' ? { step: 'findings', connect: 'submitting' } : state;
-        case 'CONNECT_FAILED':
-          return state.connect === 'submitting' ? { step: 'findings', connect: 'open' } : state;
-        case 'REPOSITORY_CONNECTED':
-          return state.connect === 'submitting' ? { step: 'fixes', phase: 'reading' } : state;
+        case 'CONTINUE':
+          return { step: 'fixes', phase: 'connect' };
         default:
           return state;
       }
     case 'fixes':
       switch (event.type) {
+        case 'CONNECT_SUBMITTED':
+          return state.phase === 'connect' ? { step: 'fixes', phase: 'submitting' } : state;
+        case 'CONNECT_FAILED':
+          return state.phase === 'submitting' ? { step: 'fixes', phase: 'connect' } : state;
+        case 'REPOSITORY_CONNECTED':
+          return state.phase === 'submitting' ? { step: 'fixes', phase: 'reading' } : state;
         case 'REPOSITORY_READ':
           return state.phase === 'reading' ? { step: 'fixes', phase: 'ready' } : state;
         default:

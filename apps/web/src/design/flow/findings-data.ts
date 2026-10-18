@@ -7,6 +7,7 @@ import type {
   CheckpointStatus,
   Issue,
   MissionReport,
+  MissionReportRun,
   ObservedCart,
 } from '@agentproof/shared';
 
@@ -24,10 +25,10 @@ import {
 import { STAGE_ORDER } from './stage';
 
 /*
- * The problems the Findings step walks through, shaped from the mission report, the run
- * reports and the composed issues. Every line is code-written: checkpoint details from the
- * verifier, the report's attribution sentences, cost table and recommendations. Nothing the
- * model wrote (inferred cause, narrative, claim, step reasons) is carried over.
+ * The problems the Findings step shows, shaped from the mission report, the run reports and the
+ * composed issues. Every line is code-written: checkpoint details from the verifier, the
+ * report's attribution sentences, cost table and recommendations. Nothing the model wrote
+ * (inferred cause, narrative, claim, step reasons) is carried over.
  */
 
 /** One shopper's result on the problem's checkpoint, for the chip row. */
@@ -73,6 +74,40 @@ export type ProblemData = {
   cost: string;
   recommendation?: string;
 };
+
+/** One shopper on the Findings strip: verdict from the run, cost from the comparison. */
+export type RosterEntry = {
+  kind: AgentKind;
+  name: string;
+  status: MissionReportRun['status'];
+  /** "$0.0025", "$0". */
+  cost: string;
+  /** "22× Alpha" for a shopper dearer than the cheapest; absent otherwise. */
+  multiple?: string;
+};
+
+/** Shoppers in stage order. A kind the mission did not run is left out. */
+export function buildRoster(report: MissionReport): RosterEntry[] {
+  const names = Object.fromEntries(report.runs.map((r) => [r.agentKind, r.agentName])) as Partial<
+    Record<AgentKind, string>
+  >;
+  const roster: RosterEntry[] = [];
+  for (const kind of STAGE_ORDER) {
+    const run = report.runs.find((r) => r.agentKind === kind);
+    if (!run) continue;
+    const costRow = report.costComparison.find((r) => r.agentKind === kind);
+    const entry: RosterEntry = {
+      kind,
+      name: run.agentName,
+      status: run.status,
+      cost: formatUsd(costRow?.estimatedCostUsd),
+    };
+    const multiple = relativeCostLabel(report.costComparison, kind, names);
+    if (multiple) entry.multiple = multiple;
+    roster.push(entry);
+  }
+  return roster;
+}
 
 /** Words the report's deterministic recommendations use for each failure category. */
 const CATEGORY_WORDS: Partial<Record<Issue['category'], string[]>> = {
