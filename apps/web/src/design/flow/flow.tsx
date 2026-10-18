@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useState } from 'react';
 import { AnimatePresence, MotionConfig, motion } from 'motion/react';
 import type {
+  AgentKind,
   AgentReport,
   FailurePoint,
   Issue,
@@ -17,13 +18,13 @@ import { summarize, thesisLine } from '../format';
 import type { ReplayEvent } from '../replay/script';
 import { useReplay } from '../replay/use-replay';
 import { DevControls } from './dev-controls';
-import { buildProblems, orderProblems } from './findings-data';
+import { buildProblems, buildRoster, orderProblems } from './findings-data';
 import { FindingsStep } from './findings-step';
 import type { CodeFixPreview, ReadingProgress } from './fixes-data';
 import { FixesStep } from './fixes-step';
 import { initialFlow, reduceFlow, stepIndex, type FlowStep } from './flow-machine';
 import { ScanStep } from './scan-step';
-import { Stepper } from './stepper';
+import { FLOW_SHELL, Stepper } from './stepper';
 import { StoreStep } from './store-step';
 
 export type FlowProps = {
@@ -59,6 +60,7 @@ type Opening = 'idle' | 'pending' | 'done';
 
 export function Flow(p: FlowProps) {
   const [state, dispatch] = useReducer(reduceFlow, p.initial.step, (step) => initialFlow(step));
+  const [reviewRunId, setReviewRunId] = useState<string>();
 
   const seeds = useMemo(() => p.runs.map((r) => ({ runId: r.runId, agent: r.agent })), [p.runs]);
   const startAtMs =
@@ -98,25 +100,31 @@ export function Flow(p: FlowProps) {
     () => buildProblems(p.report, p.runs, problems, p.frames, p.observedCarts),
     [p.report, p.runs, problems, p.frames, p.observedCarts],
   );
+  const roster = useMemo(() => buildRoster(p.report), [p.report]);
+  const agents = useMemo(
+    () => roster.map((shopper) => ({ kind: shopper.kind, name: shopper.name })),
+    [roster],
+  );
   const resolveArtifactUrl = useCallback(
     (path: string | undefined) => (path ? p.frames[path] : undefined),
     [p.frames],
   );
 
-  // Deriving the mission: the recorded hoodie mission after a short beat.
+  // Deriving the mission: the recorded hoodie mission after a short beat, then the scan.
+  const restartReplay = replay.restart;
   useEffect(() => {
     if (state.step !== 'store' || state.phase !== 'deriving') return;
     const url = state.url.trim();
-    const id = setTimeout(
-      () =>
-        dispatch({
-          type: 'MISSION_DERIVED',
-          mission: { ...p.mission, storeUrl: url || p.mission.storeUrl },
-        }),
-      DERIVE_MS,
-    );
+    const id = setTimeout(() => {
+      dispatch({
+        type: 'MISSION_DERIVED',
+        mission: { ...p.mission, storeUrl: url || p.mission.storeUrl },
+      });
+      restartReplay();
+      dispatch({ type: 'CONFIRMED' });
+    }, DERIVE_MS);
     return () => clearTimeout(id);
-  }, [state, p.mission]);
+  }, [state, p.mission, restartReplay]);
 
   useEffect(() => {
     if (state.step === 'scan' && state.phase === 'running' && replay.done) {
@@ -129,9 +137,9 @@ export function Flow(p: FlowProps) {
     window.scrollTo({ top: 0 });
   }, [state.step]);
 
-  // Connecting the repository: the fixture connection after a short beat.
+  // Connecting the repository: the fixture connection after a short beat on Fixes.
   useEffect(() => {
-    if (state.step !== 'findings' || state.connect !== 'submitting') return;
+    if (state.step !== 'fixes' || state.phase !== 'submitting') return;
     const id = setTimeout(() => dispatch({ type: 'REPOSITORY_CONNECTED' }), CONNECT_MS);
     return () => clearTimeout(id);
   }, [state]);
@@ -190,15 +198,52 @@ export function Flow(p: FlowProps) {
     );
   }, [p.codefixes, opening]);
 
-  // The sandbox keeps today's screens: a jump back to the store is an empty store step.
+  // The sandbox keeps today's screens. A jump back to a finished scan opens the review.
   const jump = useCallback(
     (step: FlowStep) => {
-      if (step === 'scan') replay.restart();
-      else if (stepIndex(step) > 1) replay.seekToEnd();
+      if (step === 'scan') {
+        const finished =
+          stepIndex(state.step) > 1 || (state.step === 'scan' && state.phase === 'done');
+        if (finished) {
+          replay.seekToEnd();
+          dispatch({ type: 'JUMP', step, context: { scanDone: true } });
+        } else {
+          replay.restart();
+          dispatch({ type: 'JUMP', step });
+        }
+        return;
+      }
+      if (step === 'store') {
+        dispatch({
+          type: 'JUMP',
+          step,
+          context: { url: p.mission.storeUrl, mission: p.mission },
+        });
+        return;
+      }
+      if (stepIndex(step) > 1) replay.seekToEnd();
       dispatch({ type: 'JUMP', step });
     },
-    [replay],
+    [replay, state],
   );
+
+  const reviewShopper = useCallback(
+    (kind: AgentKind) => {
+      const run = p.runs.find((r) => r.agent.kind === kind);
+      setReviewRunId(run?.runId);
+      replay.seekToEnd();
+      dispatch({ type: 'JUMP', step: 'scan', context: { scanDone: true } });
+    },
+    [p.runs, replay],
+  );
+
+  const changeMission = useCallback(() => {
+    dispatch({
+      type: 'JUMP',
+      step: 'store',
+      context: { url: p.mission.storeUrl, mission: p.mission, editing: true },
+    });
+  }, [p.mission]);
 
   const confirm = useCallback(() => {
     replay.restart();
@@ -218,19 +263,12 @@ export function Flow(p: FlowProps) {
   const busy =
     (state.step === 'store' && state.phase === 'deriving') ||
     (state.step === 'scan' && state.phase === 'running') ||
-    (state.step === 'findings' && state.connect === 'submitting') ||
-    (state.step === 'fixes' && state.phase === 'reading');
+    (state.step === 'fixes' && (state.phase === 'submitting' || state.phase === 'reading'));
 
   return (
     <MotionConfig reducedMotion="user">
       <Stepper current={state.step} busy={busy} onJump={jump} />
-      <main
-        className={
-          state.step === 'scan'
-            ? 'mx-auto w-full max-w-[1120px] px-6'
-            : 'mx-auto max-w-[880px] px-6 pb-24 pt-12'
-        }
-      >
+      <main className={state.step === 'scan' ? FLOW_SHELL : `${FLOW_SHELL} pb-24 pt-12`}>
         <AnimatePresence mode="wait" initial={false}>
           <motion.section
             key={state.step}
@@ -255,9 +293,6 @@ export function Flow(p: FlowProps) {
                 mission={p.mission}
                 lanes={replay.lanes}
                 phase={state.phase}
-                summary={state.phase === 'done' ? summary : undefined}
-                thesis={state.phase === 'done' ? thesis : undefined}
-                matrix={state.phase === 'done' ? p.report.matrix : undefined}
                 costComparison={state.phase === 'done' ? p.report.costComparison : undefined}
                 snapshots={p.snapshots}
                 failurePoints={p.failurePoints}
@@ -265,17 +300,30 @@ export function Flow(p: FlowProps) {
                 stepArtifacts={stepArtifacts}
                 resolveArtifactUrl={resolveArtifactUrl}
                 onContinue={() => dispatch({ type: 'CONTINUE' })}
+                onChangeMission={changeMission}
+                initialReviewRunId={state.phase === 'done' ? reviewRunId : undefined}
               />
             ) : state.step === 'findings' ? (
               <FindingsStep
                 summary={summary}
                 thesis={thesis}
                 cards={cards}
-                startAt={p.initial.step === 'findings' && p.initial.t === 'end' ? 'recap' : 'start'}
-                connect={state.connect}
-                onOpenConnect={() => dispatch({ type: 'CONNECT_OPENED' })}
-                onConnect={() => dispatch({ type: 'CONNECT_SUBMITTED' })}
+                roster={roster}
+                matrix={p.report.matrix}
+                agents={agents}
+                onReviewShopper={reviewShopper}
                 onDownload={download}
+                onGetFixes={cards.length > 0 ? () => dispatch({ type: 'CONTINUE' }) : undefined}
+              />
+            ) : state.phase === 'connect' || state.phase === 'submitting' ? (
+              <FixesStep
+                phase={state.phase}
+                fixes={problems}
+                codefixes={codefixes}
+                opening={opening}
+                onOpen={() => setOpening('pending')}
+                onConnect={() => dispatch({ type: 'CONNECT_SUBMITTED' })}
+                defaultRepositoryUrl={p.repository.url}
               />
             ) : (
               <FixesStep

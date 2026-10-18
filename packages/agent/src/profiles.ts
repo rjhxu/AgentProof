@@ -59,12 +59,12 @@ export const AGENT_PROFILES: Record<AgentKind, AgentProfile> = {
     perceives: ['screenshot'],
     perceivesLabels: ['viewport screenshot'],
     targetGrammars: ['x,y'],
-    defaultModel: { xai: 'grok-4.3', anthropic: 'claude-haiku-5-5' },
+    defaultModel: { xai: 'grok-4.3', anthropic: 'claude-sonnet-5-5' },
     defaultEffort: 'medium',
     defaultMaxSteps: 20,
     imageDetail: 'high',
     costNote:
-      'Every step sends a screenshot (image tokens) at medium effort: what vision buys and what it costs.',
+      'Every step sends a screenshot (image tokens) to Sonnet at medium effort: what vision buys and what it costs.',
   },
   gamma_structured: {
     kind: 'gamma_structured',
