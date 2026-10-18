@@ -20,14 +20,7 @@
       "maxUnitPrice": 60
     },
     "successMilestone": "checkout_review",
-    "allowedActions": [
-      "navigate",
-      "click",
-      "type",
-      "select",
-      "scroll",
-      "extract"
-    ],
+    "allowedActions": ["navigate", "click", "type", "select", "scroll", "extract"],
     "paymentAuthorized": false,
     "maxSteps": 25
   },
@@ -40,10 +33,7 @@
       "viewport screenshot",
       "page text excerpt"
     ],
-    "targetGrammars": [
-      "role:name",
-      "x,y"
-    ],
+    "targetGrammars": ["role:name", "x,y"],
     "model": "claude-sonnet-5-5",
     "provider": "anthropic",
     "effort": "high"
@@ -65,49 +55,37 @@
       "id": "correct_color_identified",
       "status": "passed",
       "detail": "Required color \"black\", observed \"black\"",
-      "evidenceIds": [
-        "ev_e5306ac7ada3"
-      ]
+      "evidenceIds": ["ev_e5306ac7ada3"]
     },
     {
       "id": "correct_size_identified",
       "status": "passed",
       "detail": "Required size \"M\", observed \"M\"",
-      "evidenceIds": [
-        "ev_e5306ac7ada3"
-      ]
+      "evidenceIds": ["ev_e5306ac7ada3"]
     },
     {
       "id": "added_to_cart",
       "status": "passed",
       "detail": "1 line item(s) in cart",
-      "evidenceIds": [
-        "ev_e5306ac7ada3"
-      ]
+      "evidenceIds": ["ev_e5306ac7ada3"]
     },
     {
       "id": "cart_matches_variant",
       "status": "passed",
       "detail": "Cart variant HOODIE-001-M matches all requested attributes",
-      "evidenceIds": [
-        "ev_e5306ac7ada3"
-      ]
+      "evidenceIds": ["ev_e5306ac7ada3"]
     },
     {
       "id": "cart_quantity_correct",
       "status": "passed",
       "detail": "Required 1, cart has 1",
-      "evidenceIds": [
-        "ev_e5306ac7ada3"
-      ]
+      "evidenceIds": ["ev_e5306ac7ada3"]
     },
     {
       "id": "price_within_budget",
       "status": "passed",
       "detail": "unit $49.00, subtotal $49.00 within budget",
-      "evidenceIds": [
-        "ev_e5306ac7ada3"
-      ]
+      "evidenceIds": ["ev_e5306ac7ada3"]
     },
     {
       "id": "checkout_review_reached",
@@ -276,9 +254,7 @@
     "estimatedCostUsd": 0.05404
   },
   "durationMs": 17482,
-  "evidenceIds": [
-    "ev_e5306ac7ada3"
-  ],
+  "evidenceIds": ["ev_e5306ac7ada3"],
   "artifacts": [
     "run_fbb8747e6c77/step-000.aria.txt",
     "run_fbb8747e6c77/step-000.png",

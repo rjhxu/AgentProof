@@ -192,14 +192,14 @@ The result is a clear before-and-after demonstration of actual system behavior.
 
 The product asks for the least it needs at each step. It never asks for source access before it has shown the merchant something worth fixing.
 
-| Step                                    | What the user gives                                 | What AgentProof shows                                                                                                                                                                                     |
-| --------------------------------------- | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **1 — Launch**                          | The storefront URL and a natural-language mission.  | The arena starts. Nothing else is required; a merchant can try the product with zero commitment.                                                                                                        |
-| **2 — Live-page inspection**            | Nothing.                                            | A fast pass over the live product page while the agents run: structured catalog variant IDs compared with the DOM, controls with no accessible name, missing prices. Needs only the URL, not the repo. |
-| **3 — Agents run and are verified**     | Nothing.                                            | One panel per agent, the checkpoint matrix, the deterministic verdict, cross-agent attribution and cost per agent.                                                                                       |
-| **4 — Issues with evidence**            | Nothing.                                            | Each issue with its observed facts and a labelled hypothesis. The report is complete and shareable at this point, with or without a repository.                                                          |
-| **5 — Connect the repository**          | GitHub access, asked for on the issue, not up front. | The ask is concrete: *connect your repo and we will propose a patch for this issue.* The code-fix agent reads the reports and the repository snapshot and returns a reviewable diff.                     |
-| **6 — Apply and Rematch**               | A review of the diff and a click.                   | The repair is applied to the owned test storefront and the same mission runs again. The before/after table shows which checkpoints now pass.                                                            |
+| Step                                | What the user gives                                  | What AgentProof shows                                                                                                                                                                                  |
+| ----------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **1 — Launch**                      | The storefront URL and a natural-language mission.   | The arena starts. Nothing else is required; a merchant can try the product with zero commitment.                                                                                                       |
+| **2 — Live-page inspection**        | Nothing.                                             | A fast pass over the live product page while the agents run: structured catalog variant IDs compared with the DOM, controls with no accessible name, missing prices. Needs only the URL, not the repo. |
+| **3 — Agents run and are verified** | Nothing.                                             | One panel per agent, the checkpoint matrix, the deterministic verdict, cross-agent attribution and cost per agent.                                                                                     |
+| **4 — Issues with evidence**        | Nothing.                                             | Each issue with its observed facts and a labelled hypothesis. The report is complete and shareable at this point, with or without a repository.                                                        |
+| **5 — Connect the repository**      | GitHub access, asked for on the issue, not up front. | The ask is concrete: _connect your repo and we will propose a patch for this issue._ The code-fix agent reads the reports and the repository snapshot and returns a reviewable diff.                   |
+| **6 — Apply and Rematch**           | A review of the diff and a click.                    | The repair is applied to the owned test storefront and the same mission runs again. The before/after table shows which checkpoints now pass.                                                           |
 
 Why the URL comes first:
 
@@ -210,7 +210,7 @@ Why the URL comes first:
 
 Two refinements:
 
-- **Early connection is allowed, never required.** The launch form has an optional *connect a repository now* field so a merchant who already trusts the product, or a demo recording, gets the diff instantly.
+- **Early connection is allowed, never required.** The launch form has an optional _connect a repository now_ field so a merchant who already trusts the product, or a demo recording, gets the diff instantly.
 - **Any lint runs against the live page, not the repository.** The metadata consistency inspector from the high-value enhancements is that step: fetch the product page, compare the catalog variant IDs with the DOM, flag unlabelled controls. It gives the dashboard something to show in the first ten seconds.
 
 ---
@@ -486,7 +486,7 @@ These failures demonstrate different compatibility problems.
 | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **1 — Launch the arena**    | The user enters the storefront URL and the shopping mission. AgentProof starts its test sessions. The dashboard displays each agent's progress.                                                                                     |
 | **2 — The failures appear** | The structured commerce test identifies the wrong variant mapping. The semantic browser agent encounters the ambiguous selector. The visual agent may succeed, highlighting that compatibility depends on the interaction strategy. |
-| **3 — Diagnose**            | AgentProof presents the captured evidence. The user selects an issue. If no repository is connected yet, AgentProof asks for it here (see the user flow in section 2), then shows the suggested source-code repair. |
+| **3 — Diagnose**            | AgentProof presents the captured evidence. The user selects an issue. If no repository is connected yet, AgentProof asks for it here (see the user flow in section 2), then shows the suggested source-code repair.                 |
 | **4 — Apply the repair**    | The developer reviews the proposed patch and applies it to the controlled test storefront.                                                                                                                                          |
 | **5 — Run Rematch**         | AgentProof reruns the affected tests. The corrected storefront now returns the expected variant, and the semantic agent can interact with the selector. The dashboard displays the improved test results side by side.              |
 

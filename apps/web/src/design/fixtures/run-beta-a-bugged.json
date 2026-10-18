@@ -20,14 +20,7 @@
       "maxUnitPrice": 60
     },
     "successMilestone": "checkout_review",
-    "allowedActions": [
-      "navigate",
-      "click",
-      "type",
-      "select",
-      "scroll",
-      "extract"
-    ],
+    "allowedActions": ["navigate", "click", "type", "select", "scroll", "extract"],
     "paymentAuthorized": false,
     "maxSteps": 25
   },
@@ -35,12 +28,8 @@
     "kind": "beta_vision",
     "name": "Agent Beta",
     "strategy": "Vision browser agent (screenshots + coordinates)",
-    "perceives": [
-      "viewport screenshot"
-    ],
-    "targetGrammars": [
-      "x,y"
-    ],
+    "perceives": ["viewport screenshot"],
+    "targetGrammars": ["x,y"],
     "model": "claude-haiku-5-5",
     "provider": "anthropic",
     "effort": "medium"
@@ -62,49 +51,37 @@
       "id": "correct_color_identified",
       "status": "passed",
       "detail": "Required color \"black\", observed \"black\"",
-      "evidenceIds": [
-        "ev_775b08ee4fd1"
-      ]
+      "evidenceIds": ["ev_775b08ee4fd1"]
     },
     {
       "id": "correct_size_identified",
       "status": "passed",
       "detail": "Required size \"M\", observed \"M\"",
-      "evidenceIds": [
-        "ev_775b08ee4fd1"
-      ]
+      "evidenceIds": ["ev_775b08ee4fd1"]
     },
     {
       "id": "added_to_cart",
       "status": "passed",
       "detail": "1 line item(s) in cart",
-      "evidenceIds": [
-        "ev_775b08ee4fd1"
-      ]
+      "evidenceIds": ["ev_775b08ee4fd1"]
     },
     {
       "id": "cart_matches_variant",
       "status": "passed",
       "detail": "Cart variant HOODIE-001-M matches all requested attributes",
-      "evidenceIds": [
-        "ev_775b08ee4fd1"
-      ]
+      "evidenceIds": ["ev_775b08ee4fd1"]
     },
     {
       "id": "cart_quantity_correct",
       "status": "passed",
       "detail": "Required 1, cart has 1",
-      "evidenceIds": [
-        "ev_775b08ee4fd1"
-      ]
+      "evidenceIds": ["ev_775b08ee4fd1"]
     },
     {
       "id": "price_within_budget",
       "status": "passed",
       "detail": "unit $49.00, subtotal $49.00 within budget",
-      "evidenceIds": [
-        "ev_775b08ee4fd1"
-      ]
+      "evidenceIds": ["ev_775b08ee4fd1"]
     },
     {
       "id": "checkout_review_reached",
@@ -263,9 +240,7 @@
     "estimatedCostUsd": 0.002722
   },
   "durationMs": 11646,
-  "evidenceIds": [
-    "ev_775b08ee4fd1"
-  ],
+  "evidenceIds": ["ev_775b08ee4fd1"],
   "artifacts": [
     "run_3b3c7a56c6fc/step-000.png",
     "run_3b3c7a56c6fc/step-001.png",
