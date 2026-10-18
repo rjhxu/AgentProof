@@ -18,3 +18,78 @@ body {
   color: var(--foreground);
   font-family: ui-sans-serif, system-ui, sans-serif;
 }
+
+/* Design pass (docs/DESIGN.md): a raised surface and soft fills for verdict chips and cells. */
+:root {
+  --panel-2: #1a1f2b;
+  --pass-soft: color-mix(in oklab, var(--pass) 16%, transparent);
+  --fail-soft: color-mix(in oklab, var(--fail) 16%, transparent);
+  --warn-soft: color-mix(in oklab, var(--warn) 16%, transparent);
+  --accent-soft: color-mix(in oklab, var(--accent) 18%, transparent);
+}
+
+/* Design pass: a quiet scrollbar for lists inside panels. */
+.thin-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+
+/*
+ * The four-step flow (docs/DESIGN.md): a light, monotone theme scoped to any subtree that
+ * carries data-theme="light". The dark tokens on :root stay for the Gamma page and the
+ * other sandbox screens. Pass and warn carry no hue of their own here: a check or a cross
+ * plus a word does the work, and the only colours are the accent and the failure red.
+ */
+[data-theme='light'],
+body:has([data-theme='light']) {
+  color-scheme: light;
+  --background: #ffffff;
+  --foreground: #15181e;
+  --muted: #5b6170;
+  --panel: #f6f7f9;
+  --panel-2: #eceef2;
+  --line: #e2e5ea;
+  --line-strong: #b9bfc9;
+  --accent: #2563eb;
+  --accent-ink: #ffffff;
+  --accent-soft: color-mix(in oklab, var(--accent) 10%, white);
+  --fail: #dc2626;
+  --fail-soft: color-mix(in oklab, var(--fail) 10%, white);
+  --pass: var(--foreground);
+  --pass-soft: var(--panel-2);
+  --warn: var(--muted);
+  --warn-soft: var(--panel-2);
+}
+
+/* The root layout's dark header is hidden only while a light subtree is on the page. */
+body:has([data-theme='light']) > header {
+  display: none;
+}
+
+.flow-root {
+  min-height: 100dvh;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flow-root .animate-pulse,
+  .flow-root .shimmer {
+    animation: none;
+  }
+}
+
+.shimmer {
+  background: linear-gradient(90deg, var(--panel) 0%, var(--panel-2) 50%, var(--panel) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}

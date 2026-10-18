@@ -1,0 +1,13 @@
+{
+  "id": "iss_a1b2c3d4e5f6",
+  "runId": "run_e2f6442a5419",
+  "checkpointId": "correct_size_identified",
+  "category": "semantic_interface_problem",
+  "title": "The size selector is invisible to shoppers that read the page as text",
+  "observed": "Required size \"M\", observed \"S\". At the product page the accessibility tree held the text \"Size S M L\" but no radio \"M\", combobox \"Size\", or button \"M\"; the cart then contained size S.",
+  "evidenceIds": ["ev_295b33586ab4", "ev_8a93ebcf5865", "ev_f9828dccf183"],
+  "inferredCause": "The custom size picker renders non-semantic <div> chips. Semantic agents cannot discover or operate it, so the default (first) size is used.",
+  "confidence": "high",
+  "suggestedRepair": "Render the size picker as a <fieldset> of <input type=\"radio\"> + <label> elements (or buttons with role=\"radio\" and aria-checked), with a visible legend \"Size\".",
+  "suspectedFiles": ["apps/storefront/src/views.ts"]
+}

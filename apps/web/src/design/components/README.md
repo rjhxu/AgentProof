@@ -1,15 +1,15 @@
-# Designed components
+# First-pass components
 
-Empty until the design pass produces them. Every component here takes props typed from `@agentproof/shared` and nothing else, so it moves to the wired dashboard unchanged.
+Built for the Arena screen on 2026-10-18 and superseded the same day by the four-step flow under `../flow/`. Every component here takes props typed from `@agentproof/shared` and nothing else.
 
-Planned, from the screen inventory in `docs/DESIGN.md`:
+| File                    | Renders                                                                    | Still used by                                     |
+| ----------------------- | -------------------------------------------------------------------------- | ------------------------------------------------- |
+| `status-badge.tsx`      | A verdict chip: mark, word and colour; goes monotone under the light theme | The flow's Scan lanes, the Arena                  |
+| `checkpoint-matrix.tsx` | Checkpoints down, agents across, with a legend                             | The flow's collapsed "all checkpoints", the Arena |
+| `mission-bar.tsx`       | The mission, store host, agent count, elapsed, total spent                 | The Arena only                                    |
+| `inspection-strip.tsx`  | Sample live-page findings                                                  | The Arena only                                    |
+| `agent-panel.tsx`       | One agent's panel with viewport, steps and verdict                         | The Arena only                                    |
+| `cost-strip.tsx`        | Cost bars per agent and the computed headline                              | The Arena only                                    |
+| `attribution-list.tsx`  | Attribution sentences with categories                                      | The Arena only                                    |
 
-- `agent-panel` — one agent: name, strategy, model, latest screenshot, steps, status, cost.
-- `checkpoint-matrix` — checkpoints down, agents across, pass / fail / not run.
-- `attribution-line` — the one sentence that says which agent passed, which failed, and what that means for the store.
-- `cost-strip` — cost per agent, with the cheapest-agent thesis visible.
-- `issue-card` — observed facts first, hypothesis labelled, the connect-repository ask, link to the diff.
-- `diff-view` — the proposed patch and Apply.
-- `before-after` — the rematch comparison.
-
-Add a line to the decisions table in `docs/DESIGN.md` when a component is added or renamed.
+When the flow is accepted, delete the Arena page and the five Arena-only files in one commit. Formatting helpers live in `../format.ts`.

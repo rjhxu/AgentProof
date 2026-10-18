@@ -22,8 +22,8 @@ export default function RematchScreen() {
     >
       <p className="text-sm text-[var(--muted)]">
         Fixture loaded: {passedCount(missionABugged.matrix)} passed cells before,{' '}
-        {passedCount(missionAFixed.matrix)} after (the fixed run has{' '}
-        {missionAFixed.runs.length} agents).
+        {passedCount(missionAFixed.matrix)} after (the fixed run has {missionAFixed.runs.length}{' '}
+        agents).
       </p>
     </ScreenShell>
   );
