@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { AgentKind } from './agent';
+import { AgentKind, AgentProfileSummary } from './agent';
 import { Checkpoint, CheckpointId, CheckpointStatus } from './checkpoint';
 import { ObservedCart } from './evidence';
 import { FailureCategory } from './issue';
@@ -41,20 +41,6 @@ export const FailurePoint = z.object({
   snapshotPath: z.string().optional(),
 });
 export type FailurePoint = z.infer<typeof FailurePoint>;
-
-export const AgentProfileSummary = z.object({
-  kind: AgentKind,
-  name: z.string(),
-  strategy: z.string(),
-  /** Human-readable list, e.g. ["accessibility tree (role + name)", "page text"] */
-  perceives: z.array(z.string()),
-  /** e.g. ["role:name"] or ["x,y"] or both; empty for Gamma */
-  targetGrammars: z.array(z.string()),
-  model: z.string(),
-  provider: z.string(),
-  effort: z.string().optional(),
-});
-export type AgentProfileSummary = z.infer<typeof AgentProfileSummary>;
 
 export const AgentReport = z.object({
   id: z.string(),

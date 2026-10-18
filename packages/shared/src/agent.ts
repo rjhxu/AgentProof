@@ -55,6 +55,26 @@ export const AgentConfig = z.object({
 export type AgentConfig = z.infer<typeof AgentConfig>;
 
 /**
+ * Human-facing profile of an agent: what it perceives, how it targets, which model it runs on.
+ * Built by @agentproof/agent from the agent profile and the resolved model. Carried on
+ * `Run.agentSummary` from the moment the runner creates the run (so a dashboard can label a
+ * lane before any report exists) and on `AgentReport.agent` once the report is written.
+ */
+export const AgentProfileSummary = z.object({
+  kind: AgentKind,
+  name: z.string(),
+  strategy: z.string(),
+  /** Human-readable list, e.g. ["accessibility tree (role + name)", "page text"] */
+  perceives: z.array(z.string()),
+  /** e.g. ["role:name"] or ["x,y"] or both; empty for Gamma */
+  targetGrammars: z.array(z.string()),
+  model: z.string(),
+  provider: z.string(),
+  effort: z.string().optional(),
+});
+export type AgentProfileSummary = z.infer<typeof AgentProfileSummary>;
+
+/**
  * Actions the browser agent may propose. The runner validates each one against the
  * Mission's allowedActions and the allowed-host list BEFORE executing it.
  *
