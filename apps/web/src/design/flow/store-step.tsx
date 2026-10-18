@@ -41,7 +41,10 @@ const PRIMARY =
 const PROMPT_PLACEHOLDER =
   'Find a black hoodie in medium for less than $60, add it to the cart, and reach checkout.';
 
-/** Step 1: one field, one button, then the derived mission and one more button. */
+/**
+ * Step 1: one field and one button. The first submit reads the store and starts the scan.
+ * The derived mission appears when the user comes back to this step.
+ */
 export function StoreStep(p: StoreStepProps) {
   const locked = p.phase !== 'idle';
   const controlled = p.onPromptChange !== undefined;
@@ -82,8 +85,12 @@ export function StoreStep(p: StoreStepProps) {
             disabled={locked || p.url.trim() === ''}
             className={`${PRIMARY} h-12 shrink-0 disabled:opacity-50`}
           >
-            {p.phase === 'deriving' ? <SpinnerIcon /> : null}
-            {p.phase === 'deriving' ? 'Reading your store' : 'Scan my store'}
+            {p.starting || p.phase === 'deriving' ? <SpinnerIcon /> : null}
+            {p.starting
+              ? 'Starting the scan'
+              : p.phase === 'deriving'
+                ? 'Reading your store'
+                : 'Scan my store'}
           </button>
         </div>
         {p.promptVisible && p.phase !== 'derived' ? (

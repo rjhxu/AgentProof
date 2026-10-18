@@ -1,10 +1,13 @@
 'use client';
 
+import { useEffect, useId, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import type {
   CodeFixCheck,
   CodeFixDelivery,
   CodeFixReview,
+  ConnectRepositoryRequest,
+  GitHubAppRepository,
   Issue,
   Repair,
   RepositoryConnection,
@@ -26,9 +29,15 @@ import { BranchIcon, CheckIcon, CrossIcon, DownloadIcon, ExternalIcon, SpinnerIc
 import { FixesMark } from './illustrations';
 import { StepHeader } from './step-header';
 
-export type FixesStepProps = {
-  repository: RepositoryConnection;
-  phase: 'reading' | 'ready';
+export type AppConnectInfo = {
+  installUrl: string;
+  repositories: GitHubAppRepository[];
+  loading: boolean;
+  error?: string;
+  onRefresh: () => void;
+};
+
+interface FixesShared {
   fixes: Array<{ issue: Issue; repair: Repair }>;
   /** Issue id -> the checks, the second opinion and the delivery of its fix. */
   codefixes: Record<string, CodeFixPreview>;
@@ -41,10 +50,244 @@ export type FixesStepProps = {
   onOpen: () => void;
   /** Problems the agent could not propose a change for, listed quietly after the cards. */
   failed?: Array<{ issue: Issue; error: string }>;
-};
+}
+
+/** No repository yet: install the GitHub App or connect by URL. */
+interface FixesAsk extends FixesShared {
+  phase: 'connect' | 'submitting';
+  onConnect: (request: ConnectRepositoryRequest, opts?: { openPullRequests?: boolean }) => void;
+  /** Why the last connection attempt failed, under the form. */
+  connectError?: string;
+  /**
+   * Present when the runner has a GitHub App: the panel asks to install it and lists the
+   * repositories it covers. Absent, the URL and token form is the whole panel.
+   */
+  app?: AppConnectInfo;
+  /** Prefills the repository field. The sandbox uses the fixture URL so the button is ready. */
+  defaultRepositoryUrl?: string;
+}
+
+interface FixesConnected extends FixesShared {
+  phase: 'reading' | 'ready';
+  repository: RepositoryConnection;
+}
+
+export type FixesStepProps = FixesAsk | FixesConnected;
 
 const PRIMARY =
-  'inline-flex h-11 items-center gap-2 rounded-md bg-[var(--accent)] px-5 text-[15px] font-medium text-[var(--accent-ink)] transition hover:opacity-90 disabled:opacity-60';
+  'inline-flex h-11 items-center justify-center gap-2 rounded-md bg-[var(--accent)] px-5 text-[15px] font-medium text-[var(--accent-ink)] transition hover:opacity-90 disabled:opacity-60';
+/** What connecting allows, in full: each fix is checked by rerunning the shopper on a patched copy. */
+const CONSENT =
+  'We may clone this repository to read it and run a patched copy of your store on this machine to check each fix. Nothing is written to your repository.';
+/** The GitHub App path also opens a draft pull request for each fix that validates. */
+const APP_CONSENT =
+  'We may clone this repository to read it and run a patched copy of your store on this machine to check each fix. AgentProof will open a draft pull request for each fix it validates, and never merges.';
+const FIELD =
+  'mt-1 h-11 w-full rounded-md border border-[var(--line-strong)] bg-[var(--background)] px-3 text-[15px] outline-none focus:border-[var(--accent)] focus:ring-4 focus:ring-[var(--accent-soft)]';
+const QUIET = 'text-sm text-[var(--muted)] underline-offset-4 hover:underline';
+
+function ConnectForm({
+  busy,
+  error,
+  defaultUrl = '',
+  onSubmit,
+}: {
+  busy: boolean;
+  error?: string;
+  defaultUrl?: string;
+  onSubmit: (request: ConnectRepositoryRequest) => void;
+}) {
+  const id = useId();
+  const [url, setUrl] = useState(defaultUrl);
+  const tokenRef = useRef<HTMLInputElement>(null);
+  const ready = url.trim() !== '' && !busy;
+  return (
+    <form
+      className="mt-4 space-y-3 text-left"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!ready) return;
+        const token = tokenRef.current?.value.trim();
+        if (tokenRef.current) tokenRef.current.value = '';
+        onSubmit({ url: url.trim(), ...(token ? { token } : {}), consent: true });
+      }}
+    >
+      <label className="block text-sm" htmlFor={`${id}-url`}>
+        <span className="text-[var(--muted)]">Repository</span>
+        <input
+          id={`${id}-url`}
+          type="url"
+          autoComplete="url"
+          placeholder="https://github.com/owner/repository"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          className={FIELD}
+        />
+      </label>
+      <label className="block text-sm" htmlFor={`${id}-token`}>
+        <span className="text-[var(--muted)]">Read-only token, only for private repositories</span>
+        <input
+          id={`${id}-token`}
+          ref={tokenRef}
+          type="password"
+          // A token is not a saved password: keep the browser from filling one in.
+          autoComplete="new-password"
+          className={FIELD}
+        />
+      </label>
+      <p className="text-[13px] leading-snug text-[var(--muted)]">
+        {CONSENT} A token is used once and never stored.
+      </p>
+      <button type="submit" disabled={!ready} className={`${PRIMARY} w-full`}>
+        {busy ? <SpinnerIcon /> : <BranchIcon />}
+        {busy ? 'Connecting' : 'Connect and read the code'}
+      </button>
+      {error ? (
+        <p role="alert" className="text-[13px] leading-snug text-[var(--fail)]">
+          {error}
+        </p>
+      ) : null}
+    </form>
+  );
+}
+
+/** Install the GitHub App, pick one of the repositories it covers, and connect it. */
+function AppConnect({
+  app,
+  busy,
+  error,
+  onSubmit,
+}: {
+  app: AppConnectInfo;
+  busy: boolean;
+  error?: string;
+  onSubmit: (request: ConnectRepositoryRequest) => void;
+}) {
+  const id = useId();
+  const [fullName, setFullName] = useState('');
+  const selected = app.repositories.find((repository) => repository.fullName === fullName);
+  const waiting = app.repositories.length === 0;
+  const ready = selected !== undefined && !busy;
+
+  useEffect(() => {
+    if (app.repositories.some((repository) => repository.fullName === fullName)) return;
+    const only = app.repositories.length === 1 ? app.repositories[0] : undefined;
+    setFullName(only?.fullName ?? '');
+  }, [app.repositories, fullName]);
+
+  return (
+    <form
+      className="mt-4 space-y-3 text-left"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!selected || !ready) return;
+        onSubmit({ url: selected.url, consent: true });
+      }}
+    >
+      <a href={app.installUrl} target="_blank" rel="noreferrer" className={`${PRIMARY} w-full`}>
+        <ExternalIcon />
+        {waiting ? 'Add AgentProof to your repositories' : 'Add more repositories'}
+      </a>
+      <p className="text-[13px] leading-snug text-[var(--muted)]">
+        GitHub asks which repositories AgentProof may work on. Come back here and choose one.
+      </p>
+      {waiting ? (
+        <p className="flex items-center gap-2 text-sm text-[var(--muted)]">
+          {app.loading ? <SpinnerIcon /> : null}
+          Waiting for the app on GitHub…
+          <button type="button" onClick={app.onRefresh} className={QUIET}>
+            Refresh
+          </button>
+        </p>
+      ) : (
+        <label className="block text-sm" htmlFor={`${id}-repo`}>
+          <span className="text-[var(--muted)]">Repository</span>
+          <select
+            id={`${id}-repo`}
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
+            className={FIELD}
+          >
+            <option value="">Choose a repository</option>
+            {app.repositories.map((repository) => (
+              <option key={repository.fullName} value={repository.fullName}>
+                {repository.fullName}
+                {repository.private ? ' (private)' : ''}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      {app.error ? (
+        <p role="alert" className="text-[13px] leading-snug text-[var(--fail)]">
+          {app.error}
+        </p>
+      ) : null}
+      <p className="text-[13px] leading-snug text-[var(--muted)]">{APP_CONSENT}</p>
+      <button type="submit" disabled={!ready} className={`${PRIMARY} w-full`}>
+        {busy ? <SpinnerIcon /> : <BranchIcon />}
+        {busy ? 'Connecting' : 'Connect and open draft pull requests'}
+      </button>
+      {error ? (
+        <p role="alert" className="text-[13px] leading-snug text-[var(--fail)]">
+          {error}
+        </p>
+      ) : null}
+    </form>
+  );
+}
+
+/** The install link or the URL form, shown until a repository is connected. */
+function ConnectAsk({ phase, connectError, app, onConnect, defaultRepositoryUrl }: FixesAsk) {
+  const [manual, setManual] = useState(false);
+  const showApp = app !== undefined && !manual;
+  return (
+    <div>
+      <StepHeader
+        mark={<FixesMark />}
+        title="Get fixes"
+        subtitle={
+          showApp
+            ? 'Add AgentProof to the store’s repository. We read the code behind each problem and open a draft pull request for each fix; you review and merge.'
+            : 'Connect the store’s repository. We read the code behind each problem and suggest the change; you decide what to apply.'
+        }
+      />
+      <div className="mx-auto mt-8 max-w-[560px]">
+        {showApp && app ? (
+          <>
+            <AppConnect
+              app={app}
+              busy={phase === 'submitting'}
+              error={connectError}
+              onSubmit={(request) => onConnect(request, { openPullRequests: true })}
+            />
+            <p className="mt-3 text-sm">
+              <button type="button" onClick={() => setManual(true)} className={QUIET}>
+                Use a repository URL and token instead
+              </button>
+            </p>
+          </>
+        ) : (
+          <>
+            <ConnectForm
+              busy={phase === 'submitting'}
+              error={connectError}
+              defaultUrl={defaultRepositoryUrl}
+              onSubmit={onConnect}
+            />
+            {app ? (
+              <p className="mt-3 text-sm">
+                <button type="button" onClick={() => setManual(false)} className={QUIET}>
+                  Use the GitHub App instead
+                </button>
+              </p>
+            ) : null}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function Reading({
   repository,
@@ -95,7 +338,10 @@ function Checks({ checks }: { checks: CodeFixCheck[] }) {
   const rematch = byId.get('rematch');
   return (
     <div>
-      <ul className="flex flex-wrap gap-x-4 gap-y-1.5" aria-label="Validation checks">
+      <ul
+        className="grid grid-cols-2 gap-x-3 gap-y-1.5 min-[1280px]:grid-cols-7"
+        aria-label="Validation checks"
+      >
         {CHECK_ORDER.map((id) => {
           const check = byId.get(id);
           const status = check?.status ?? 'skipped';
@@ -103,7 +349,7 @@ function Checks({ checks }: { checks: CodeFixCheck[] }) {
             <li
               key={id}
               title={check?.detail ?? 'not run'}
-              className="flex items-center gap-1.5 text-[12px]"
+              className="flex items-center gap-1.5 whitespace-nowrap text-[12px]"
             >
               {status === 'passed' ? (
                 <span className="flex h-4 w-4 items-center justify-center rounded-full bg-[var(--foreground)] text-[var(--background)]">
@@ -241,13 +487,24 @@ function FixCard({
 }
 
 /**
- * Step 4: a short reading beat, then one card per problem with its checks, the second opinion
- * and its patch, and one action: open a draft pull request per fix. Merging stays with the
- * merchant; the patches are the fallback when the app is not installed on the repository.
- * The reading progress and the opening state come from the caller: the sandbox beats them on a
- * timer, the live page reads them off the code-fix records.
+ * Step 4: connect the repository when none is yet, then a short reading beat, then one card per
+ * problem with its checks, the second opinion and its patch, and one action: open a draft pull
+ * request per fix. Merging stays with the merchant; the patches are the fallback when the app
+ * is not installed on the repository. The reading progress and the opening state come from the
+ * caller: the sandbox beats them on a timer, the live page reads them off the code-fix records.
  */
 export function FixesStep(p: FixesStepProps) {
+  switch (p.phase) {
+    case 'connect':
+    case 'submitting':
+      return <ConnectAsk {...p} />;
+    case 'reading':
+    case 'ready':
+      return <FixesReady {...p} />;
+  }
+}
+
+function FixesReady(p: FixesConnected) {
   const count = p.fixes.length;
   const failed = p.failed ?? [];
   const canOpen = canOpenPullRequests(p.repository);
@@ -291,11 +548,81 @@ export function FixesStep(p: FixesStepProps) {
         }
       />
 
+      {p.phase === 'ready' && count > 0 ? (
+        <section className="mt-6 flex flex-wrap items-center justify-between gap-x-6 gap-y-3 rounded-lg border border-[var(--line)] bg-[var(--panel)] px-4 py-3">
+          <div className="min-w-[240px] flex-1">
+            <h3 className="text-[15px] font-semibold">Get these changes into your repository</h3>
+            <p className="mt-0.5 text-[13px] leading-snug text-[var(--muted)]">
+              {count} suggested change{count === 1 ? '' : 's'}.{' '}
+              {canOpen
+                ? 'One draft pull request per change, each on a branch of its own. You review and merge; we never merge.'
+                : `Opening pull requests needs the AgentProof GitHub App installed on ${p.repository.fullName}. Until then, download the patches and apply them yourself.`}
+            </p>
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2">
+            <AnimatePresence mode="wait" initial={false}>
+              {canOpen && p.opening === 'done' ? (
+                <motion.p
+                  key="opened"
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="inline-flex items-center gap-2 text-[15px] font-medium"
+                >
+                  {delivered === 0 ? (
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[var(--fail)] text-white">
+                      <CrossIcon size={12} />
+                    </span>
+                  ) : (
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[var(--foreground)] text-[var(--background)]">
+                      <CheckIcon size={12} />
+                    </span>
+                  )}
+                  {delivered === 0
+                    ? 'No draft pull request opened'
+                    : `${delivered} of ${count} draft pull request${count === 1 ? '' : 's'} opened`}
+                </motion.p>
+              ) : (
+                <motion.div key="action" exit={{ opacity: 0 }}>
+                  {canOpen ? (
+                    <button
+                      type="button"
+                      disabled={p.opening === 'pending'}
+                      onClick={p.onOpen}
+                      className={PRIMARY}
+                    >
+                      {p.opening === 'pending' ? <SpinnerIcon /> : <BranchIcon />}
+                      {p.opening === 'pending'
+                        ? 'Opening'
+                        : `Open ${count} draft pull request${count === 1 ? '' : 's'}`}
+                    </button>
+                  ) : (
+                    <button type="button" onClick={downloadPatches} className={PRIMARY}>
+                      <DownloadIcon />
+                      Download the patches
+                    </button>
+                  )}
+                </motion.div>
+              )}
+            </AnimatePresence>
+            {canOpen ? (
+              <button
+                type="button"
+                onClick={downloadPatches}
+                className="inline-flex items-center gap-1.5 text-sm text-[var(--muted)] underline-offset-4 hover:underline"
+              >
+                <DownloadIcon size={14} />
+                Download the patches instead
+              </button>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
+
       {p.phase === 'reading' ? (
         <Reading repository={p.repository} reading={p.reading} />
       ) : (
         <motion.ol
-          className="mt-8 space-y-4"
+          className="mt-6 space-y-4"
           initial="hidden"
           animate="shown"
           variants={{ shown: { transition: { staggerChildren: 0.08 } } }}
@@ -321,71 +648,6 @@ export function FixesStep(p: FixesStepProps) {
             </li>
           ))}
         </ul>
-      ) : null}
-
-      {p.phase === 'ready' && count > 0 ? (
-        <section className="mt-8 rounded-lg border border-[var(--line)] bg-[var(--panel)] p-6 text-center">
-          <h3 className="text-[18px] font-semibold">Get these changes into your repository</h3>
-          <p className="mx-auto mt-1 max-w-[520px] text-sm leading-relaxed text-[var(--muted)]">
-            {canOpen
-              ? 'One draft pull request per change, each on a branch of its own. You review and merge; we never merge.'
-              : `Opening pull requests needs the AgentProof GitHub App installed on ${p.repository.fullName}. Until then, download the patches and apply them yourself.`}
-          </p>
-          <AnimatePresence mode="wait" initial={false}>
-            {canOpen && p.opening === 'done' ? (
-              <motion.p
-                key="opened"
-                initial={{ opacity: 0, y: 6 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="mt-5 inline-flex items-center gap-2 text-[15px] font-medium"
-              >
-                {delivered === 0 ? (
-                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[var(--fail)] text-white">
-                    <CrossIcon size={12} />
-                  </span>
-                ) : (
-                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[var(--foreground)] text-[var(--background)]">
-                    <CheckIcon size={12} />
-                  </span>
-                )}
-                {delivered === 0
-                  ? 'No draft pull request opened'
-                  : `${delivered} of ${count} draft pull request${count === 1 ? '' : 's'} opened`}
-              </motion.p>
-            ) : (
-              <motion.div key="action" exit={{ opacity: 0 }} className="mt-5">
-                {canOpen ? (
-                  <button
-                    type="button"
-                    disabled={p.opening === 'pending'}
-                    onClick={p.onOpen}
-                    className={PRIMARY}
-                  >
-                    {p.opening === 'pending' ? <SpinnerIcon /> : <BranchIcon />}
-                    {p.opening === 'pending'
-                      ? 'Opening'
-                      : `Open ${count} draft pull request${count === 1 ? '' : 's'}`}
-                  </button>
-                ) : (
-                  <button type="button" onClick={downloadPatches} className={PRIMARY}>
-                    <DownloadIcon />
-                    Download the patches
-                  </button>
-                )}
-              </motion.div>
-            )}
-          </AnimatePresence>
-          {canOpen ? (
-            <button
-              type="button"
-              onClick={downloadPatches}
-              className="mt-5 inline-flex items-center gap-1.5 text-sm text-[var(--muted)] underline-offset-4 hover:underline"
-            >
-              <DownloadIcon size={14} />
-              Download the patches instead
-            </button>
-          ) : null}
-        </section>
       ) : null}
 
       {p.phase === 'ready' && count > 0 ? (

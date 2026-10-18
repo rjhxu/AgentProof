@@ -33,13 +33,16 @@ describe('flow machine', () => {
     const scanning = reduceFlow(derived, { type: 'CONFIRMED' });
     expect(scanning).toEqual({ step: 'scan', phase: 'running' });
 
-    const findings = run([{ type: 'SCAN_FINISHED' }, { type: 'CONTINUE' }], scanning);
-    expect(findings).toEqual({ step: 'findings', connect: 'closed' });
+    const findings = reduceFlow(scanning, { type: 'SCAN_FINISHED' });
+    expect(findings).toEqual({ step: 'findings' });
+    expect(reduceFlow({ step: 'scan', phase: 'done' }, { type: 'CONTINUE' })).toEqual(findings);
+    expect(reduceFlow(scanning, { type: 'CONTINUE' })).toEqual(scanning);
+    expect(reduceFlow(findings, { type: 'CONNECT_SUBMITTED' })).toBe(findings);
 
-    const open = reduceFlow(findings, { type: 'CONNECT_OPENED' });
-    expect(open).toEqual({ step: 'findings', connect: 'open' });
-    const submitting = reduceFlow(open, { type: 'CONNECT_SUBMITTED' });
-    expect(submitting).toEqual({ step: 'findings', connect: 'submitting' });
+    const connect = reduceFlow(findings, { type: 'CONTINUE' });
+    expect(connect).toEqual({ step: 'fixes', phase: 'connect' });
+    const submitting = reduceFlow(connect, { type: 'CONNECT_SUBMITTED' });
+    expect(submitting).toEqual({ step: 'fixes', phase: 'submitting' });
 
     const reading = reduceFlow(submitting, { type: 'REPOSITORY_CONNECTED' });
     expect(reading).toEqual({ step: 'fixes', phase: 'reading' });
@@ -49,18 +52,18 @@ describe('flow machine', () => {
     });
   });
 
-  it('returns a failed connection to the open form, and only from submitting', () => {
-    const submitting: FlowState = { step: 'findings', connect: 'submitting' };
+  it('returns a failed connection to the connect form, and only from submitting', () => {
+    const submitting: FlowState = { step: 'fixes', phase: 'submitting' };
     expect(reduceFlow(submitting, { type: 'CONNECT_FAILED' })).toEqual({
-      step: 'findings',
-      connect: 'open',
+      step: 'fixes',
+      phase: 'connect',
     });
-    const closed: FlowState = { step: 'findings', connect: 'closed' };
-    expect(reduceFlow(closed, { type: 'CONNECT_FAILED' })).toBe(closed);
-    expect(reduceFlow(closed, { type: 'CONNECT_SUBMITTED' })).toBe(closed);
-    expect(reduceFlow(closed, { type: 'REPOSITORY_CONNECTED' })).toBe(closed);
-    const open: FlowState = { step: 'findings', connect: 'open' };
-    expect(reduceFlow(open, { type: 'REPOSITORY_CONNECTED' })).toBe(open);
+    const connect: FlowState = { step: 'fixes', phase: 'connect' };
+    expect(reduceFlow(connect, { type: 'CONNECT_FAILED' })).toBe(connect);
+    expect(reduceFlow(connect, { type: 'REPOSITORY_CONNECTED' })).toBe(connect);
+    const ready: FlowState = { step: 'fixes', phase: 'ready' };
+    expect(reduceFlow(ready, { type: 'CONNECT_SUBMITTED' })).toBe(ready);
+    expect(reduceFlow(submitting, { type: 'CONNECT_SUBMITTED' })).toBe(submitting);
   });
 
   it('goes back to idle with the URL kept when deriving fails', () => {
@@ -117,10 +120,20 @@ describe('flow machine', () => {
       step: 'fixes',
       phase: 'ready',
     });
+    expect(
+      reduceFlow(initialFlow(), {
+        type: 'JUMP',
+        step: 'fixes',
+        context: { fixesReading: true },
+      }),
+    ).toEqual({ step: 'fixes', phase: 'reading' });
     expect(reduceFlow(initialFlow(), { type: 'JUMP', step: 'scan' })).toEqual({
       step: 'scan',
       phase: 'running',
     });
+    expect(
+      reduceFlow(initialFlow(), { type: 'JUMP', step: 'scan', context: { scanDone: true } }),
+    ).toEqual({ step: 'scan', phase: 'done' });
     expect(isCompleted('findings', 'scan')).toBe(true);
     expect(isCompleted('scan', 'findings')).toBe(false);
   });
@@ -152,5 +165,23 @@ describe('flow machine', () => {
       editing: false,
     });
     expect(initialFlow('store')).toEqual({ step: 'store', url: '', phase: 'idle', editing: false });
+    expect(initialFlow('store', { mission: hoodieMission, editing: true })).toEqual({
+      step: 'store',
+      url: hoodieMission.storeUrl,
+      phase: 'derived',
+      mission: hoodieMission,
+      editing: true,
+    });
+  });
+
+  it('confirms a scan straight from deriving', () => {
+    const deriving = run([
+      { type: 'URL_CHANGED', url: 'https://shop.example' },
+      { type: 'URL_SUBMITTED' },
+    ]);
+    expect(reduceFlow(deriving, { type: 'CONFIRMED' })).toEqual({
+      step: 'scan',
+      phase: 'running',
+    });
   });
 });
