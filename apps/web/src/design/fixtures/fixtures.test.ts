@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  codefixesABugged,
   missionABugged,
   missionAFixed,
   missionControl,
@@ -9,6 +10,7 @@ import {
   resolveDesignArtifact,
   runAlphaABugged,
   runsABugged,
+  snapshotsABugged,
 } from './index';
 
 /**
@@ -57,6 +59,23 @@ describe('design fixtures', () => {
     expect(resolveDesignArtifact('run_unknown/step-000.png')).toBeUndefined();
   });
 
+  it('every accessibility-tree snapshot a reading agent took is in the snapshots fixture', () => {
+    let count = 0;
+    for (const report of runsABugged) {
+      for (const step of report.steps) {
+        if (!step.snapshotPath) continue;
+        count += 1;
+        expect(snapshotsABugged[step.snapshotPath]).toMatch(/^- /);
+      }
+      const failing = report.failurePoint?.snapshotPath;
+      if (failing) expect(snapshotsABugged[failing]).toContain(report.failurePoint!.perceived);
+    }
+    expect(count).toBe(11);
+    expect(
+      runsABugged.find((r) => r.agent.kind === 'beta_vision')!.steps.some((s) => s.snapshotPath),
+    ).toBe(false);
+  });
+
   it('the problems point at runs of the mission and carry their repairs', () => {
     const runIds = new Set(missionABugged.runs.map((r) => r.runId));
     for (const { issue, repair } of problemsABugged) {
@@ -66,5 +85,27 @@ describe('design fixtures', () => {
       expect(repair.files.every((f) => f.startsWith('apps/storefront/'))).toBe(true);
     }
     expect(repositoryA.files.length).toBe(repositoryA.fileCount);
+  });
+
+  it('every problem has a composed code fix with all seven checks and a pull request to open', () => {
+    for (const { issue } of problemsABugged) {
+      const preview = codefixesABugged[issue.id];
+      expect(preview).toBeDefined();
+      expect(preview!.checks.map((c) => c.id).sort()).toEqual(
+        [
+          'applies_cleanly',
+          'content_policy',
+          'no_dependency_changes',
+          'paths_in_scope',
+          'rematch',
+          'size_within_bounds',
+          'typecheck',
+        ].sort(),
+      );
+      expect(preview!.delivery.status).toBe('not_requested');
+      expect(preview!.opened?.status).toBe('delivered');
+      expect(preview!.opened?.draft).toBe(true);
+    }
+    expect(repositoryA.accessVia).toBe('github_app');
   });
 });

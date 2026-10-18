@@ -2,22 +2,24 @@
 
 import { useCallback, useEffect, useMemo, useReducer } from 'react';
 import { AnimatePresence, MotionConfig, motion } from 'motion/react';
-import { CHECKPOINT_LABELS } from '@agentproof/shared';
 import type {
-  AgentKind,
   AgentReport,
+  FailurePoint,
   Issue,
   Mission,
   MissionReport,
+  ObservedCart,
   Repair,
   RepositoryConnection,
 } from '@agentproof/shared';
 
-import { costLine, summarize } from '../format';
+import { summarize, thesisLine } from '../format';
 import type { ReplayEvent } from '../replay/script';
 import { useReplay } from '../replay/use-replay';
 import { DevControls } from './dev-controls';
-import { FindingsStep, type IssueCardData } from './findings-step';
+import { buildProblems, orderProblems } from './findings-data';
+import { FindingsStep } from './findings-step';
+import type { CodeFixPreview } from './fixes-data';
 import { FixesStep } from './fixes-step';
 import { initialFlow, reduceFlow, stepIndex, type FlowStep } from './flow-machine';
 import { ScanStep } from './scan-step';
@@ -33,67 +35,19 @@ export type FlowProps = {
   mission: Mission;
   /** Artifact path -> URL for every frame the sandbox can show. */
   frames: Record<string, string>;
+  /** Artifact path -> the accessibility-tree text a reading agent took at a step. */
+  snapshots: Record<string, string>;
+  /** Run id -> where the run diverged, from each report. */
+  failurePoints: Record<string, FailurePoint>;
+  /** Run id -> the cart the verifier observed, from each report. */
+  observedCarts: Record<string, ObservedCart>;
+  /** Issue id -> the checks, the second opinion and the delivery of its fix. */
+  codefixes: Record<string, CodeFixPreview>;
   initial: { step: FlowStep; speed: number; t: number | 'end' | null };
 };
 
 const DERIVE_MS = 700;
 const READ_MS = 2200;
-
-/** Words the report's deterministic recommendations use for each failure category. */
-const CATEGORY_WORDS: Partial<Record<Issue['category'], string[]>> = {
-  semantic_interface_problem: ['accessible name', 'role'],
-  product_data_inconsistency: ['catalog', 'cart api'],
-  cart_checkout_defect: ['cart', 'checkout'],
-};
-
-function buildCards(
-  report: MissionReport,
-  runs: AgentReport[],
-  problems: FlowProps['problems'],
-  frames: Record<string, string>,
-): IssueCardData[] {
-  const names = Object.fromEntries(report.runs.map((r) => [r.agentKind, r.agentName])) as Partial<
-    Record<AgentKind, string>
-  >;
-  return problems.map(({ issue }) => {
-    const run = runs.find((r) => r.runId === issue.runId);
-    const kind = run?.agent.kind;
-    const attribution =
-      report.attributions.find(
-        (a) => a.checkpointId === issue.checkpointId && a.category === issue.category,
-      ) ??
-      report.attributions.find(
-        (a) => a.category === issue.category && (kind ? a.failingAgents.includes(kind) : true),
-      );
-    const failingStep =
-      run?.failurePoint && run.steps.find((s) => s.index === run.failurePoint?.stepIndex);
-    const screenshotPath = run?.failurePoint?.screenshotPath ?? failingStep?.screenshotPath;
-    const rowId = attribution?.checkpointId ?? issue.checkpointId;
-    const row = report.matrix[rowId];
-    const affected = report.runs
-      .map((r) => ({
-        kind: r.agentKind,
-        name: r.agentName,
-        status: row?.[r.agentKind] ?? 'not_run',
-      }))
-      .filter((a) => a.status !== 'not_run');
-    const labels = [CHECKPOINT_LABELS[issue.checkpointId], CHECKPOINT_LABELS[rowId]];
-    // Two recommendations can name the same checkpoint; the category's own words break the tie.
-    const keywords = CATEGORY_WORDS[issue.category] ?? [];
-    const candidates = report.recommendations.filter((r) => labels.some((l) => r.includes(l)));
-    const recommendation =
-      candidates.find((r) => keywords.some((w) => r.toLowerCase().includes(w))) ?? candidates[0];
-    return {
-      issue,
-      attribution,
-      screenshotUrl: screenshotPath ? frames[screenshotPath] : undefined,
-      excerpt: run?.failurePoint?.perceived,
-      affected,
-      cost: kind ? costLine(report.costComparison, kind, names) : '',
-      recommendation,
-    };
-  });
-}
 
 export function Flow(p: FlowProps) {
   const [state, dispatch] = useReducer(reduceFlow, p.initial.step, initialFlow);
@@ -114,9 +68,27 @@ export function Flow(p: FlowProps) {
   });
 
   const summary = useMemo(() => summarize(p.report), [p.report]);
+  const thesis = useMemo(() => thesisLine(p.report), [p.report]);
+  // Where each step's frame and snapshot live, for walking back through a run after the scan.
+  const stepArtifacts = useMemo(
+    () =>
+      Object.fromEntries(
+        p.runs.map((r) => [
+          r.runId,
+          r.steps.map((s) => ({
+            index: s.index,
+            screenshotPath: s.screenshotPath,
+            snapshotPath: s.snapshotPath,
+          })),
+        ]),
+      ),
+    [p.runs],
+  );
+  // Problems in the order they broke the purchase path; Findings and Fixes share it.
+  const problems = useMemo(() => orderProblems(p.problems, p.runs), [p.problems, p.runs]);
   const cards = useMemo(
-    () => buildCards(p.report, p.runs, p.problems, p.frames),
-    [p.report, p.runs, p.problems, p.frames],
+    () => buildProblems(p.report, p.runs, problems, p.frames, p.observedCarts),
+    [p.report, p.runs, problems, p.frames, p.observedCarts],
   );
   const resolveArtifactUrl = useCallback(
     (path: string | undefined) => (path ? p.frames[path] : undefined),
@@ -187,7 +159,13 @@ export function Flow(p: FlowProps) {
   return (
     <MotionConfig reducedMotion="user">
       <Stepper current={state.step} busy={busy} onJump={jump} />
-      <main className="mx-auto max-w-[880px] px-6 pb-24 pt-12">
+      <main
+        className={
+          state.step === 'scan'
+            ? 'mx-auto w-full max-w-[1120px] px-6'
+            : 'mx-auto max-w-[880px] px-6 pb-24 pt-12'
+        }
+      >
         <AnimatePresence mode="wait" initial={false}>
           <motion.section
             key={state.step}
@@ -213,14 +191,22 @@ export function Flow(p: FlowProps) {
                 lanes={replay.lanes}
                 phase={state.phase}
                 summary={state.phase === 'done' ? summary : undefined}
+                thesis={state.phase === 'done' ? thesis : undefined}
                 matrix={state.phase === 'done' ? p.report.matrix : undefined}
+                costComparison={state.phase === 'done' ? p.report.costComparison : undefined}
+                snapshots={p.snapshots}
+                failurePoints={p.failurePoints}
+                observedCarts={p.observedCarts}
+                stepArtifacts={stepArtifacts}
                 resolveArtifactUrl={resolveArtifactUrl}
                 onContinue={() => dispatch({ type: 'CONTINUE' })}
               />
             ) : state.step === 'findings' ? (
               <FindingsStep
                 summary={summary}
+                thesis={thesis}
                 cards={cards}
+                startAt={p.initial.step === 'findings' && p.initial.t === 'end' ? 'recap' : 'start'}
                 connect={state.connect}
                 onOpenConnect={() => dispatch({ type: 'CONNECT_OPENED' })}
                 onConnect={(request) => dispatch({ type: 'CONNECT_SUBMITTED', request })}
@@ -230,7 +216,8 @@ export function Flow(p: FlowProps) {
               <FixesStep
                 repository={p.repository}
                 phase={state.phase}
-                fixes={p.problems}
+                fixes={problems}
+                codefixes={p.codefixes}
                 readMs={READ_MS}
               />
             )}

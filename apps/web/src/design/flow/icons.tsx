@@ -79,6 +79,43 @@ export function ExternalIcon(props: IconProps) {
   );
 }
 
+/** Reads the page as text. */
+export function TextLinesIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M3 4.5h10M3 8h7M3 11.5h8.5" />
+    </Icon>
+  );
+}
+
+/** Looks at screenshots. */
+export function EyeIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8s-2.5 4.5-6.5 4.5S1.5 8 1.5 8z" />
+      <path d="M8 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4z" />
+    </Icon>
+  );
+}
+
+/** The strongest model. */
+export function SparkIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M8 1.5l1.6 4.4L14 7.5l-4.4 1.6L8 13.5 6.4 9.1 2 7.5l4.4-1.6z" />
+    </Icon>
+  );
+}
+
+/** Reads the catalog feed and the cart API. */
+export function BracesIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M6 2.5c-1.5 0-2 .7-2 2v2c0 .8-.5 1.5-1.5 1.5C3.5 8 4 8.7 4 9.5v2c0 1.3.5 2 2 2M10 2.5c1.5 0 2 .7 2 2v2c0 .8.5 1.5 1.5 1.5-1 0-1.5.7-1.5 1.5v2c0 1.3-.5 2-2 2" />
+    </Icon>
+  );
+}
+
 export function SpinnerIcon({ className, ...props }: IconProps) {
   return (
     <Icon {...props} className={['animate-spin', className].filter(Boolean).join(' ')}>
