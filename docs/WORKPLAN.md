@@ -17,13 +17,14 @@ Shared schemas and fixtures; the storefront with five planted bugs, a control pr
 
 ## Zach
 
-| Task                                                                                                                                                                      | Status                                           |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| LLM layer, tiered models, prompts, targets, the loop, reports, attribution, runner wiring, CLI, scripted harness                                                          | **done**                                         |
-| Live runs of all four agents on A to E and the control, bugged and fixed; prompt tuning from them (run summary in the user turn, fast failure on absent controls)         | **done** ([RESULTS.md](./RESULTS.md))            |
-| Dashboard: agent checkboxes, run panels, checkpoint matrix, attribution, cost, report links, diff and Apply, rematch before/after. Keep the Gamma flow working underneath | next                                             |
-| Demo recording (`--headed` or `PLAYWRIGHT_HEADED=1`, OBS) and the Devpost draft                                                                                           | after the dashboard; draft due Saturday 10:30 PM |
-| Decide whether the code-fix agent may use Sonnet (`AGENTPROOF_MODEL_DIAGNOSIS`); the default is Haiku                                                                     | when Vihan has a first run                       |
+| Task                                                                                                                                                                                | Status                                           |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| LLM layer, tiered models, prompts, targets, the loop, reports, attribution, runner wiring, CLI, scripted harness                                                                    | **done**                                         |
+| Live runs of all four agents on A to E and the control, bugged and fixed; prompt tuning from them (run summary in the user turn, fast failure on absent controls)                   | **done** ([RESULTS.md](./RESULTS.md))            |
+| Design pass before wiring: branch `design/arena-ui`, sandbox under `apps/web/src/design` with one route per screen under `/design`, brief and decisions in [DESIGN.md](./DESIGN.md) | in progress                                      |
+| Dashboard: agent checkboxes, run panels, checkpoint matrix, attribution, cost, report links, diff and Apply, rematch before/after. Keep the Gamma flow working underneath           | next                                             |
+| Demo recording (`--headed` or `PLAYWRIGHT_HEADED=1`, OBS) and the Devpost draft                                                                                                     | after the dashboard; draft due Saturday 10:30 PM |
+| Decide whether the code-fix agent may use Sonnet (`AGENTPROOF_MODEL_DIAGNOSIS`); the default is Haiku                                                                               | when Vihan has a first run                       |
 
 ## Ryan
 

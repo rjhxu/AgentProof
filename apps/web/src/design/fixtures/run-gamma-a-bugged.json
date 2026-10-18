@@ -1,0 +1,135 @@
+{
+  "id": "rep_4e2639d74c18",
+  "runId": "run_895ecf41c7bf",
+  "missionId": "mis_4d8c056edb7d",
+  "generatedAt": "2026-10-18T03:27:22.222Z",
+  "storeUrl": "http://localhost:5000",
+  "mission": {
+    "id": "mis_4d8c056edb7d",
+    "createdAt": "2026-10-18T03:27:04.579Z",
+    "storeUrl": "http://localhost:5000",
+    "rawPrompt": "Find a black hoodie in medium for less than $60, add it to the cart, and reach checkout. Do not place the order.",
+    "requirements": {
+      "product": "black hoodie",
+      "category": "apparel",
+      "attributes": {
+        "color": "black",
+        "size": "M"
+      },
+      "quantity": 1,
+      "maxUnitPrice": 60
+    },
+    "successMilestone": "checkout_review",
+    "allowedActions": ["navigate", "click", "type", "select", "scroll", "extract"],
+    "paymentAuthorized": false,
+    "maxSteps": 25
+  },
+  "agent": {
+    "kind": "gamma_structured",
+    "name": "Agent Gamma",
+    "strategy": "Structured commerce inspector (catalog feed + cart API, no LLM)",
+    "perceives": ["catalog feed (JSON)", "cart API (JSON)"],
+    "targetGrammars": [],
+    "model": "none",
+    "provider": "none"
+  },
+  "status": "failed",
+  "claim": {
+    "outcome": "done",
+    "summary": "Selected HOODIE-001-M from the live catalog. Read back the cart using this run’s session cookie."
+  },
+  "checkpoints": [
+    {
+      "id": "product_discovered",
+      "status": "passed",
+      "evidenceIds": ["ev_29cb95cf7d5f"],
+      "detail": "Identified in live catalog: HOODIE-001-M"
+    },
+    {
+      "id": "correct_color_identified",
+      "status": "passed",
+      "detail": "Identified in live catalog: HOODIE-001-M",
+      "evidenceIds": ["ev_29cb95cf7d5f"]
+    },
+    {
+      "id": "correct_size_identified",
+      "status": "passed",
+      "detail": "Identified in live catalog: HOODIE-001-M",
+      "evidenceIds": ["ev_29cb95cf7d5f"]
+    },
+    {
+      "id": "added_to_cart",
+      "status": "passed",
+      "detail": "1 line item(s) in cart",
+      "evidenceIds": ["ev_d0219d7503b4"]
+    },
+    {
+      "id": "cart_matches_variant",
+      "status": "failed",
+      "detail": "size: required \"M\", cart has \"S\"",
+      "evidenceIds": ["ev_d0219d7503b4"]
+    },
+    {
+      "id": "cart_quantity_correct",
+      "status": "passed",
+      "detail": "Required 1, cart has 1",
+      "evidenceIds": ["ev_d0219d7503b4"]
+    },
+    {
+      "id": "price_within_budget",
+      "status": "passed",
+      "detail": "unit $49.00, subtotal $49.00 within budget",
+      "evidenceIds": ["ev_d0219d7503b4"]
+    },
+    {
+      "id": "checkout_review_reached",
+      "status": "passed",
+      "evidenceIds": ["ev_e5535e319d3a"]
+    },
+    {
+      "id": "catalog_variant_resolves",
+      "status": "failed",
+      "detail": "Requested HOODIE-001-M ({\"color\":\"black\",\"size\":\"M\"}); cart returned HOODIE-001-S ({\"color\":\"black\",\"size\":\"S\"}).",
+      "evidenceIds": ["ev_29cb95cf7d5f", "ev_d0219d7503b4"]
+    }
+  ],
+  "firstFailure": {
+    "id": "cart_matches_variant",
+    "status": "failed",
+    "detail": "size: required \"M\", cart has \"S\"",
+    "evidenceIds": ["ev_d0219d7503b4"]
+  },
+  "observedCart": {
+    "items": [
+      {
+        "productId": "HOODIE-001",
+        "variantId": "HOODIE-001-S",
+        "name": "Black Hoodie",
+        "attributes": {
+          "color": "black",
+          "size": "S"
+        },
+        "unitPrice": 49,
+        "quantity": 1
+      }
+    ],
+    "subtotal": 49,
+    "currency": "USD",
+    "source": "api"
+  },
+  "steps": [],
+  "narrative": "Agent Gamma recorded no browser steps; it perceived catalog feed (JSON) and cart API (JSON). It stopped with done: Selected HOODIE-001-M from the live catalog. Read back the cart using this run’s session cookie. The verifier passed 7 of 9 checkpoints; the first failure was Cart matches requested variant (size: required \"M\", cart has \"S\").",
+  "usage": {
+    "calls": 0,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "reasoningTokens": 0,
+    "cachedInputTokens": 0,
+    "imageInputs": 0,
+    "llmLatencyMs": 0,
+    "estimatedCostUsd": 0
+  },
+  "durationMs": 50,
+  "evidenceIds": ["ev_29cb95cf7d5f", "ev_d0219d7503b4", "ev_e5535e319d3a"],
+  "artifacts": []
+}
