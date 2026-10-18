@@ -14,10 +14,51 @@ export type ScreenShellProps = {
   fixture: string;
   /** From the screen inventory in docs/DESIGN.md. */
   mustShow: readonly string[];
+  /**
+   * `placeholder` (default) shows the must-show list and a dashed area to design in.
+   * `design` collapses the list and renders the children full width, as the real page would.
+   */
+  mode?: 'placeholder' | 'design';
   children?: ReactNode;
 };
 
-export function ScreenShell({ name, step, fixture, mustShow, children }: ScreenShellProps) {
+export function ScreenShell({
+  name,
+  step,
+  fixture,
+  mustShow,
+  mode = 'placeholder',
+  children,
+}: ScreenShellProps) {
+  if (mode === 'design') {
+    return (
+      <main className="mx-auto max-w-[1440px] px-6 py-4">
+        <nav className="mb-3 flex flex-wrap items-baseline justify-between gap-2 text-sm text-[var(--muted)]">
+          <span>
+            <Link href="/design" className="hover:text-[var(--foreground)]">
+              Design sandbox
+            </Link>
+            <span className="mx-2">/</span>
+            <span>{name}</span>
+            <span className="mx-2">·</span>
+            {step}
+          </span>
+          <details className="text-xs">
+            <summary className="cursor-pointer">
+              Must show · fixture <code className="rounded bg-[var(--panel)] px-1">{fixture}</code>
+            </summary>
+            <ul className="mt-2 list-disc space-y-1 pl-5">
+              {mustShow.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </details>
+        </nav>
+        {children}
+      </main>
+    );
+  }
+
   return (
     <main className="mx-auto max-w-[1440px] px-6 py-6">
       <nav className="mb-4 text-sm text-[var(--muted)]">

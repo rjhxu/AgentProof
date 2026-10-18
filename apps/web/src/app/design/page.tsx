@@ -6,18 +6,26 @@ import Link from 'next/link';
  */
 const screens = [
   {
+    href: '/design/flow',
+    name: 'Flow',
+    step: 'Steps 1 to 4',
+    summary:
+      'The simple four-step flow: store, scan, findings, fixes. Light theme, one step at a time.',
+    status: 'in progress',
+  },
+  {
     href: '/design/launch',
     name: 'Launch',
     step: 'Step 1',
     summary: 'URL, mission, agents, optional repository, Start.',
-    status: 'todo',
+    status: 'superseded by Flow',
   },
   {
     href: '/design/arena',
     name: 'Arena',
     step: 'Steps 2 and 3',
     summary: 'One panel per agent, live-page inspection, the checkpoint matrix filling in.',
-    status: 'todo',
+    status: 'superseded by Flow, kept for reference',
   },
   {
     href: '/design/report',
