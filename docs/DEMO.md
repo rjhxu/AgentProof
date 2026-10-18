@@ -50,9 +50,20 @@ pnpm cli -- --agent alpha --bug A --headed      # alpha | beta | sigma | gamma; 
 pnpm cli -- --agent alpha --bug A --headed --store http://localhost:5050
 ```
 
+## The four-step flow (wired 2026-10-18)
+
+The dashboard at http://localhost:3000 runs the whole story live, with the runner on :4000 and the store on :5000:
+
+1. **Store.** Paste the store address (`localhost:5000` is enough; the page adds the scheme). The runner reads the store's catalog feed and derives the mission with no model call: the black hoodie in size M under $60. "Change" edits the request; the edited text goes through the mission generator.
+2. **Scan.** "Start the scan" creates the four runs. The stage shows one shopper at a time in stage order (Alpha, Beta, Gamma, Sigma) at a readable pace while the runner runs them two at a time; the roster carries each verdict and cost, and the closing line is the mission report's.
+3. **Findings.** One problem at a time, told in beats on a click or a key: what the verifier saw, what the shopper read, how each shopper did on that checkpoint with its cost, what it means, what to change. Titles come from the diagnosis (a code-written title stands in when the model cannot answer). The recap leads to "Connect GitHub".
+4. **Fixes.** The repository connects to every failed run, one diff-mode fix runs per run (reading, proposing, validating, a second opinion, a rerun of the failing shopper against the patched store), and each card shows the seven code-written checks, the reviewer's opinion, the patch and the delivery line. With the GitHub App installed on the repository, "Open draft pull requests" opens one draft per fix; otherwise "Download the patches".
+
+A reload keeps the mission (`?mission=<id>` is in the address bar) and shows the finished scan; the fixes already run are adopted instead of started again.
+
 ## The Gamma dashboard flow (built)
 
-The dashboard at http://localhost:3000 runs the hoodie mission for Gamma end to end without a model key:
+The Gamma page at http://localhost:3000/gamma (the root now opens the four-step flow) runs the hoodie mission for Gamma end to end without a model key:
 
 1. Click **Run Gamma test**. Gamma requests `HOODIE-001-M` from the live catalog in its own cart session; the planted mapping returns `HOODIE-001-S`; the report fails cart variant matching and catalog variant resolution.
 2. Expand the captured catalog and cart evidence. **Inspect failure & propose repair** shows the deterministic diagnosis and the one-line source diff (a known rule for this bug, not a model).
