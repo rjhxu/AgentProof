@@ -1,0 +1,306 @@
+{
+  "id": "rep_ffc98e92d3af",
+  "missionId": "mis_4d8c056edb7d",
+  "generatedAt": "2026-10-18T03:27:41.010Z",
+  "mission": {
+    "id": "mis_4d8c056edb7d",
+    "createdAt": "2026-10-18T03:27:04.579Z",
+    "storeUrl": "http://localhost:5000",
+    "rawPrompt": "Find a black hoodie in medium for less than $60, add it to the cart, and reach checkout. Do not place the order.",
+    "requirements": {
+      "product": "black hoodie",
+      "category": "apparel",
+      "attributes": {
+        "color": "black",
+        "size": "M"
+      },
+      "quantity": 1,
+      "maxUnitPrice": 60
+    },
+    "successMilestone": "checkout_review",
+    "allowedActions": [
+      "navigate",
+      "click",
+      "type",
+      "select",
+      "scroll",
+      "extract"
+    ],
+    "paymentAuthorized": false,
+    "maxSteps": 25
+  },
+  "storeUrl": "http://localhost:5000",
+  "runs": [
+    {
+      "runId": "run_e2f6442a5419",
+      "agentKind": "alpha_semantic",
+      "agentName": "Agent Alpha",
+      "model": "claude-haiku-5-5",
+      "status": "failed",
+      "claim": {
+        "outcome": "done",
+        "summary": "Reached checkout review page with 1 x Black Hoodie (Color: Black, Size: S) at $49.00, but the requested Size M could not be selected (no Size option existed in the tree), so the cart contains Size S instead of M, which is the unmet requirement.",
+        "finalUrl": "http://localhost:5000/checkout"
+      },
+      "firstFailure": {
+        "id": "correct_size_identified",
+        "status": "failed",
+        "detail": "Required size \"M\", observed \"S\"",
+        "evidenceIds": [
+          "ev_295b33586ab4"
+        ]
+      },
+      "usage": {
+        "calls": 7,
+        "inputTokens": 18897,
+        "outputTokens": 1130,
+        "reasoningTokens": 119,
+        "cachedInputTokens": 0,
+        "imageInputs": 0,
+        "estimatedCostUsd": 0.002454,
+        "llmLatencyMs": 10645
+      },
+      "durationMs": 12912,
+      "stepsUsed": 6,
+      "reportPath": "run_e2f6442a5419/report.json"
+    },
+    {
+      "runId": "run_3b3c7a56c6fc",
+      "agentKind": "beta_vision",
+      "agentName": "Agent Beta",
+      "model": "claude-haiku-5-5",
+      "status": "passed",
+      "claim": {
+        "outcome": "done",
+        "summary": "The checkout review page is showing 1 x Black Hoodie (Color: Black, Size: M) at $49.00, within the $60 max, so the checkout_review milestone is reached; I stopped before Place order.",
+        "finalUrl": "http://localhost:5000/checkout"
+      },
+      "usage": {
+        "calls": 6,
+        "inputTokens": 19579,
+        "outputTokens": 1527,
+        "reasoningTokens": 713,
+        "cachedInputTokens": 0,
+        "imageInputs": 5,
+        "estimatedCostUsd": 0.002722,
+        "llmLatencyMs": 11650
+      },
+      "durationMs": 11646,
+      "stepsUsed": 5,
+      "reportPath": "run_3b3c7a56c6fc/report.json"
+    },
+    {
+      "runId": "run_fbb8747e6c77",
+      "agentKind": "sigma_hybrid",
+      "agentName": "Agent Sigma",
+      "model": "claude-sonnet-5-5",
+      "status": "passed",
+      "claim": {
+        "outcome": "done",
+        "summary": "Checkout review page is visibly reached showing 1 x Black Hoodie (Color: Black, Size: M) at $49.00, within the $60 max; I did not click Place order. Note: step #1 was a click by x,y on a color/size control, and the review page confirms Color: Black, Size: M.",
+        "finalUrl": "http://localhost:5000/checkout"
+      },
+      "usage": {
+        "calls": 6,
+        "inputTokens": 23743,
+        "outputTokens": 1184,
+        "reasoningTokens": 230,
+        "cachedInputTokens": 0,
+        "imageInputs": 5,
+        "estimatedCostUsd": 0.05404,
+        "llmLatencyMs": 15324
+      },
+      "durationMs": 17482,
+      "stepsUsed": 5,
+      "reportPath": "run_fbb8747e6c77/report.json"
+    },
+    {
+      "runId": "run_895ecf41c7bf",
+      "agentKind": "gamma_structured",
+      "agentName": "Agent Gamma",
+      "model": "none",
+      "status": "failed",
+      "claim": {
+        "outcome": "done",
+        "summary": "Selected HOODIE-001-M from the live catalog. Read back the cart using this run’s session cookie."
+      },
+      "firstFailure": {
+        "id": "cart_matches_variant",
+        "status": "failed",
+        "detail": "size: required \"M\", cart has \"S\"",
+        "evidenceIds": [
+          "ev_d0219d7503b4"
+        ]
+      },
+      "usage": {
+        "calls": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "reasoningTokens": 0,
+        "cachedInputTokens": 0,
+        "imageInputs": 0,
+        "estimatedCostUsd": 0,
+        "llmLatencyMs": 0
+      },
+      "durationMs": 50,
+      "stepsUsed": 0,
+      "reportPath": "run_895ecf41c7bf/report.json"
+    }
+  ],
+  "matrix": {
+    "product_discovered": {
+      "alpha_semantic": "passed",
+      "beta_vision": "passed",
+      "gamma_structured": "passed",
+      "sigma_hybrid": "passed"
+    },
+    "correct_color_identified": {
+      "alpha_semantic": "passed",
+      "beta_vision": "passed",
+      "gamma_structured": "passed",
+      "sigma_hybrid": "passed"
+    },
+    "correct_size_identified": {
+      "alpha_semantic": "failed",
+      "beta_vision": "passed",
+      "gamma_structured": "passed",
+      "sigma_hybrid": "passed"
+    },
+    "added_to_cart": {
+      "alpha_semantic": "passed",
+      "beta_vision": "passed",
+      "gamma_structured": "passed",
+      "sigma_hybrid": "passed"
+    },
+    "cart_matches_variant": {
+      "alpha_semantic": "failed",
+      "beta_vision": "passed",
+      "gamma_structured": "failed",
+      "sigma_hybrid": "passed"
+    },
+    "cart_quantity_correct": {
+      "alpha_semantic": "passed",
+      "beta_vision": "passed",
+      "gamma_structured": "passed",
+      "sigma_hybrid": "passed"
+    },
+    "price_within_budget": {
+      "alpha_semantic": "passed",
+      "beta_vision": "passed",
+      "gamma_structured": "passed",
+      "sigma_hybrid": "passed"
+    },
+    "checkout_review_reached": {
+      "alpha_semantic": "passed",
+      "beta_vision": "passed",
+      "gamma_structured": "passed",
+      "sigma_hybrid": "passed"
+    },
+    "catalog_variant_resolves": {
+      "alpha_semantic": "not_run",
+      "beta_vision": "not_run",
+      "gamma_structured": "failed",
+      "sigma_hybrid": "not_run"
+    },
+    "catalog_price_matches_page": {
+      "alpha_semantic": "not_run",
+      "beta_vision": "not_run",
+      "gamma_structured": "not_run",
+      "sigma_hybrid": "not_run"
+    }
+  },
+  "attributions": [
+    {
+      "checkpointId": "correct_size_identified",
+      "category": "semantic_interface_problem",
+      "reason": "Agent Sigma passed and Agent Alpha failed on \"Correct size identified\": the control was usable on screen but not through the accessibility tree",
+      "reference": "sigma_hybrid",
+      "pattern": {
+        "alpha_semantic": "failed",
+        "beta_vision": "passed",
+        "gamma_structured": "passed",
+        "sigma_hybrid": "passed"
+      },
+      "failingAgents": [
+        "alpha_semantic"
+      ]
+    },
+    {
+      "checkpointId": "cart_matches_variant",
+      "category": "product_data_inconsistency",
+      "reason": "Agent Beta passed through the page while Agent Gamma failed through the catalog and cart API on \"Cart matches requested variant\"",
+      "reference": "sigma_hybrid",
+      "pattern": {
+        "alpha_semantic": "failed",
+        "beta_vision": "passed",
+        "gamma_structured": "failed",
+        "sigma_hybrid": "passed"
+      },
+      "failingAgents": [
+        "gamma_structured"
+      ]
+    },
+    {
+      "checkpointId": "cart_matches_variant",
+      "category": "semantic_interface_problem",
+      "reason": "Agent Sigma passed and Agent Alpha failed on \"Cart matches requested variant\": the control was usable on screen but not through the accessibility tree",
+      "reference": "sigma_hybrid",
+      "pattern": {
+        "alpha_semantic": "failed",
+        "beta_vision": "passed",
+        "gamma_structured": "failed",
+        "sigma_hybrid": "passed"
+      },
+      "failingAgents": [
+        "alpha_semantic"
+      ]
+    }
+  ],
+  "costComparison": [
+    {
+      "agentKind": "alpha_semantic",
+      "model": "claude-haiku-5-5",
+      "status": "failed",
+      "inputTokens": 18897,
+      "outputTokens": 1130,
+      "imageInputs": 0,
+      "estimatedCostUsd": 0.002454,
+      "relativeCost": 1
+    },
+    {
+      "agentKind": "beta_vision",
+      "model": "claude-haiku-5-5",
+      "status": "passed",
+      "inputTokens": 19579,
+      "outputTokens": 1527,
+      "imageInputs": 5,
+      "estimatedCostUsd": 0.002722,
+      "relativeCost": 1.11
+    },
+    {
+      "agentKind": "sigma_hybrid",
+      "model": "claude-sonnet-5-5",
+      "status": "passed",
+      "inputTokens": 23743,
+      "outputTokens": 1184,
+      "imageInputs": 5,
+      "estimatedCostUsd": 0.05404,
+      "relativeCost": 22.02
+    },
+    {
+      "agentKind": "gamma_structured",
+      "model": "none",
+      "status": "failed",
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "imageInputs": 0,
+      "estimatedCostUsd": 0,
+      "relativeCost": 0
+    }
+  ],
+  "headline": "2 of 4 agents completed the mission. Agent Alpha failed at \"Correct size identified\". Agent Gamma failed at \"Cart matches requested variant\". The cheapest agent that completed it was Agent Beta at $0.0027 (estimated); Agent Alpha would have cost ~$0.0025.",
+  "recommendations": [
+    "Expose the controls behind \"Correct size identified\", \"Cart matches requested variant\" with a real role and accessible name (native inputs, labels, aria-*), so a text-only agent can find and operate them without screenshots.",
+    "Make the structured catalog and the cart API agree with the product page for \"Cart matches requested variant\": an agent that never renders the page must get the same variant and price a shopper sees."
+  ]
+}
