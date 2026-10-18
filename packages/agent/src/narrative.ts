@@ -23,7 +23,7 @@ import { buildNarrativePrompt } from './prompts';
  * report is always produced.
  */
 
-export const NARRATIVE_MAX_TOKENS = 700;
+export const NARRATIVE_MAX_TOKENS = 2000;
 export const NARRATIVE_TIMEOUT_MS = 60_000;
 export const NARRATIVE_UNAVAILABLE_PREFIX = 'Narrative unavailable';
 
@@ -159,6 +159,7 @@ export async function generateNarrative(
     });
     const response = await client.complete({
       model,
+      effort: 'low',
       system,
       messages: [{ role: 'user', content: [{ type: 'text', text: user }] }],
       maxTokens: NARRATIVE_MAX_TOKENS,
