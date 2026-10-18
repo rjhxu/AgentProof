@@ -23,15 +23,19 @@ Sanity checks:
 
 ```bash
 pnpm typecheck      # all packages
-pnpm test           # vitest across the workspace (333 tests as of 2026-10-17)
+pnpm test           # vitest across the workspace (344 tests as of 2026-10-18)
 pnpm llm:smoke      # proves the provider, key and strict-JSON output (needs credits)
 pnpm cli -- --agent gamma --bug A       # proves the store + verifier + reports without a model
 pnpm --filter @agentproof/agent exec tsx --env-file-if-exists=../../.env scripts/scripted-run.ts alpha A
                     # proves Playwright + the real loop with a scripted model
 node docs/storefront/verify-scenarios.mjs --expect=bugs   # proves the store still has its bugs
+node scripts/run-mission.mjs --bug A --agents alpha,beta,sigma,gamma   # all four through the runner (costs about $0.07)
+scripts/make-fixed-store.sh ../northwind-fixed            # the store with the five fixes, as a sibling repo on :5050
 curl localhost:4000/health
 curl localhost:5000/api/catalog.json
 ```
+
+Expected outcomes for every agent and scenario, bugged and fixed, are in [RESULTS.md](./RESULTS.md); a run that disagrees with that table is a regression (or a flaky model turn: run it once more before debugging).
 
 ## Ownership
 
@@ -42,14 +46,14 @@ curl localhost:5000/api/catalog.json
 | `apps/runner`, `packages/verifier`, `packages/diagnostics`, `gamma.ts` | Vihan    | everything inside                                                                                             | the browser-run branch in `jobs.ts`, `reports.ts`, `attribute.ts` (Zach added) |
 | `packages/shared`                                                      | everyone | add fields with defaults                                                                                      | renaming or removing anything                                                  |
 
-Full task breakdown and handoffs: [WORKPLAN.md](./WORKPLAN.md).
+`scripts/` at the repo root holds cross-cutting helpers (the runner driver, the fixed-store export); anyone may add one. What is left and who does it: [WORKPLAN.md](./WORKPLAN.md).
 
 Changing a schema in `packages/shared`? Post in the group chat first. Keep `packages/shared/src/api.ts`, `apps/runner/src/routes.ts` and `apps/web/src/lib/api.ts` in sync. Run `pnpm typecheck` to see who you broke.
 
 ## Git
 
 - `main` is always runnable. Never push a red `pnpm typecheck` to it.
-- Short-lived branches: `zach/arena-ui`, `abg-agents-impl`, `vihan/runner-verify`, etc. Merge often (every 1-2 hours), small PRs or direct merges, no long-lived forks of `shared`.
+- Short-lived branches: `zach/arena-ui`, `ryan/store-repo`, `vihan/code-fix-agent`, etc. Merge often (every 1-2 hours), small PRs or direct merges, no long-lived forks of `shared`.
 - Commit messages: `area: what changed` (`runner: stream checkpoints over SSE`).
 - Never commit `.env`, `data/`, or screenshots. They are gitignored.
 
