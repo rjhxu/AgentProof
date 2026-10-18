@@ -1,10 +1,10 @@
-import { z } from 'zod';
 import {
   AgentActionDraft,
   type AgentAction,
   type AgentKind,
   type RunStep,
 } from '@agentproof/shared';
+import { toStrictJsonSchema } from './llm';
 import {
   describeTarget,
   describeTargetGrammar,
@@ -28,10 +28,11 @@ const FIELD_DESCRIPTIONS: Record<string, string> = {
   type: 'The single action to take this turn.',
   reason: 'One sentence: why this action. For done it is your summary; for fail, what blocked you.',
   target:
-    'Control to act on, in your target grammar (click, type). For select: the option group label as the accessibility tree names it, e.g. Size. Null otherwise.',
+    'Control to act on, in your target grammar (click, type). For select: the option group label as the accessibility tree names it, e.g. Size, or its role:name, e.g. combobox:Size. Null otherwise.',
   url: 'Absolute http(s) URL on the store (navigate only). Null otherwise.',
   text: 'Text to type into the target (type only). Null otherwise.',
-  value: 'The option to choose, e.g. M (select only). Null otherwise.',
+  value:
+    "The option's exact accessible name as the accessibility tree shows it, case-sensitive, e.g. M or Navy, not the mission's spelling (select only). Null otherwise.",
   direction: 'up or down (scroll only). Null otherwise.',
   what: 'What to read off the page (extract only). Null otherwise.',
 };
@@ -40,43 +41,21 @@ const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
 
 /**
- * Strict-mode rules shared by the providers' JSON-schema modes: object roots, every property
- * required, additionalProperties false, no $schema / default keys. Nullable fields stay as
- * `type: [T, 'null']` or `anyOf: [..., { type: 'null' }]`, which is what z.toJSONSchema emits.
+ * The strict JSON schema requested from the provider for every decide() call: llm.ts's
+ * provider-strictness rules (object root, every property required, additionalProperties false,
+ * nullable as `type: [T, 'null']` / anyOf + null, no $schema or default keys) applied to
+ * AgentActionDraft, plus a model-facing description per field. Built fresh on every call.
  */
-function strictify(node: unknown, path: string[] = []): unknown {
-  if (Array.isArray(node)) return node.map((n) => strictify(n, path));
-  if (!isObject(node)) return node;
-  const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(node)) {
-    if (key === '$schema' || key === 'default') continue;
-    if (key === 'properties' && isObject(value)) {
-      const props: Record<string, unknown> = {};
-      for (const [name, prop] of Object.entries(value)) {
-        const strictProp = strictify(prop, [...path, name]);
-        const description = path.length === 0 ? FIELD_DESCRIPTIONS[name] : undefined;
-        props[name] =
-          description && isObject(strictProp) && !('description' in strictProp)
-            ? { ...strictProp, description }
-            : strictProp;
-      }
-      out.properties = props;
-      out.required = Object.keys(props);
-      out.additionalProperties = false;
-      continue;
-    }
-    if (key === 'required' || key === 'additionalProperties') continue; // rewritten above
-    out[key] = strictify(value, path);
-  }
-  return out;
-}
-
-/** The strict JSON schema requested from the provider for every decide() call. */
 export function actionDraftJsonSchema(): { name: string; schema: Record<string, unknown> } {
-  const raw = z.toJSONSchema(AgentActionDraft);
-  const schema = strictify(raw) as Record<string, unknown>;
-  schema.type = 'object';
-  return { name: ACTION_SCHEMA_NAME, schema };
+  const { schema } = toStrictJsonSchema(AgentActionDraft, ACTION_SCHEMA_NAME);
+  const props = isObject(schema.properties) ? schema.properties : {};
+  const described: Record<string, unknown> = {};
+  for (const [name, prop] of Object.entries(props)) {
+    const description = FIELD_DESCRIPTIONS[name];
+    described[name] =
+      description && isObject(prop) && !('description' in prop) ? { ...prop, description } : prop;
+  }
+  return { name: ACTION_SCHEMA_NAME, schema: { ...schema, properties: described } };
 }
 
 export type ActionConversion = { ok: true; action: AgentAction } | { ok: false; reason: string };
@@ -101,6 +80,14 @@ const SELECT_TARGET_HINT =
   'the option group label as the accessibility tree names it (e.g. Size) or its role:name (e.g. combobox:Size)';
 
 /**
+ * Why `select` is rejected for Beta. Shown to the model next turn; the Beta system prompt says
+ * the same thing, and buildUserTurn() drops select from Beta's allowedActions so the mission JSON
+ * never advertises it.
+ */
+export const BETA_SELECT_REJECTION =
+  "this agent picks options by clicking them: use click with the option's x,y";
+
+/**
  * A select target names the option GROUP for chooseOption's ladder (radio -> combobox -> button),
  * which resolves purely through the accessibility tree. So it is either a bare group label such
  * as "Size" or a role:name, and only agents that read the tree may use it: Beta picks options by
@@ -112,16 +99,8 @@ function resolveSelectTarget(
   kind: AgentKind,
   viewport?: Viewport,
 ): { ok: true; target: string } | { ok: false; reason: string } {
-  const allowed = targetGrammars(kind);
-  if (allowed.length === 0) {
-    return { ok: false, reason: `agent ${kind} does not take actions (it has no browser)` };
-  }
-  if (!allowed.includes('role:name')) {
-    return {
-      ok: false,
-      reason:
-        'select is not available to this agent: it resolves options through the accessibility tree, which this agent cannot see; click the option directly with its x,y (for a dropdown, click it open, then click the option)',
-    };
+  if (!targetGrammars(kind).includes('role:name')) {
+    return { ok: false, reason: BETA_SELECT_REJECTION };
   }
   const shape = targetShape(target);
   if (shape === 'x,y') {
@@ -169,6 +148,11 @@ export function toAgentAction(
   const d = parsed.data;
   const reason = clean(d.reason);
 
+  const needsBrowser = d.type === 'click' || d.type === 'type' || d.type === 'select';
+  if (needsBrowser && targetGrammars(kind).length === 0) {
+    return fail(`agent ${kind} does not take browser actions (it has no browser)`);
+  }
+
   switch (d.type) {
     case 'navigate': {
       const url = clean(d.url);
@@ -203,7 +187,11 @@ export function toAgentAction(
       const target = clean(d.target);
       const value = clean(d.value);
       if (!target) return fail(`select needs "target": ${SELECT_TARGET_HINT}`);
-      if (!value) return fail('select needs "value": the option to choose, e.g. M');
+      if (!value) {
+        return fail(
+          'select needs "value": the option\'s exact accessible name as the accessibility tree shows it (case-sensitive), e.g. M or Navy',
+        );
+      }
       const resolved = resolveSelectTarget(target, kind, viewport);
       if (!resolved.ok) return fail(resolved.reason);
       return ok({ type: 'select', target: resolved.target, value, reason });

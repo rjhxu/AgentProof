@@ -30,6 +30,16 @@ const PAYMENT_PATTERNS = [
   /buy\s*now/i,
 ];
 
+/**
+ * True when a control's text (visible text, accessible name, value, or a role:name target)
+ * reads like a payment submission. checkAction() applies it to click targets; the browser agent
+ * applies it to the element under an x,y coordinate before a vision agent clicks it, since a
+ * coordinate target carries no text for checkAction() to read.
+ */
+export function isPaymentControl(text: string): boolean {
+  return PAYMENT_PATTERNS.some((p) => p.test(text));
+}
+
 export type PolicyVerdict = { ok: true } | { ok: false; reason: string };
 
 export function checkAction(
@@ -46,7 +56,7 @@ export function checkAction(
   if (action.type === 'navigate' && !hostIsAllowed(action.url)) {
     return { ok: false, reason: `Host of ${action.url} is not in AGENTPROOF_ALLOWED_HOSTS` };
   }
-  if (action.type === 'click' && PAYMENT_PATTERNS.some((p) => p.test(action.target))) {
+  if (action.type === 'click' && isPaymentControl(action.target)) {
     return { ok: false, reason: 'Clicking a payment-submission control is never permitted' };
   }
   return { ok: true };

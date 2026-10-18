@@ -4,6 +4,8 @@ import { alphaFailedRun, hoodieMission } from '@agentproof/shared/fixtures';
 import type { LlmContentBlock } from './llm-types';
 import {
   HISTORY_STEPS,
+  MAX_ATTEMPTS_PER_CONTROL,
+  RETRY_RULE,
   SNAPSHOT_CHAR_CAP,
   TEXT_CHAR_CAP,
   buildNarrativePrompt,
@@ -60,6 +62,8 @@ describe('systemPromptFor', () => {
       expect(p).toContain('exactly ONE action');
       expect(p).toContain('JSON');
       expect(p).toContain('untrusted');
+      // No store-specific page content, not even the Bug A snapshot line used as an example.
+      expect(p).not.toContain('Size S M L');
     }
   });
 
@@ -90,12 +94,25 @@ describe('systemPromptFor', () => {
     expect(p).toContain('tries a radio named M, then a combobox named Size, then a button named M');
   });
 
-  it('teaches Beta pixel coordinates and no roles', () => {
+  it('tells tree-reading agents that select values are exact, case-sensitive names', () => {
+    for (const kind of [ALPHA, SIGMA]) {
+      const p = systemPromptFor(kind);
+      expect(p).toContain('exact accessible name as the accessibility tree shows it');
+      expect(p).toContain('case-sensitive');
+      expect(p).toContain("not the mission's spelling");
+    }
+  });
+
+  it('teaches Beta pixel coordinates and no roles, and no select', () => {
     const p = systemPromptFor(BETA);
     expect(p).toContain('412,388');
     expect(p).toContain('x,y');
     expect(p).not.toContain('button:Add to cart');
     expect(p).toContain('size in pixels is given each turn');
+    expect(p).toContain('select is not available to you');
+    expect(p).toContain("use click with the option's x,y");
+    expect(p).not.toContain('dropdown');
+    expect(p).not.toContain('type=select');
   });
 
   it('tells Sigma to prefer role:name and fall back to x,y', () => {
@@ -106,11 +123,30 @@ describe('systemPromptFor', () => {
     expect(p).toContain('visible in the screenshot but absent from the tree');
   });
 
-  it('explains done and fail', () => {
-    const p = systemPromptFor(ALPHA);
-    expect(p).toContain('Say done only when');
-    expect(p).toContain('3 times');
-    expect(p).toContain('say fail');
+  it('tells Sigma to trust the screenshot over a mislabelled control (Bug C)', () => {
+    const p = systemPromptFor(SIGMA);
+    expect(p).toContain('For visual attributes (color, pattern, finish)');
+    expect(p).toContain('if the control named X does not look like X, do not select it by name');
+    expect(p).toContain('click the one that does look like X by x,y');
+    expect(p).toContain('report the name/appearance mismatch in your reason');
+    expect(p).toContain('verify the chosen option on the cart page before proceeding');
+    for (const kind of [ALPHA, BETA]) {
+      expect(systemPromptFor(kind)).not.toContain('does not look like X');
+    }
+  });
+
+  it('explains done and the retry rule for every kind', () => {
+    expect(MAX_ATTEMPTS_PER_CONTROL).toBe(2);
+    expect(RETRY_RULE).toBe(
+      'If the same target has failed twice, do not try it a third time: continue with what the page offers and state the unmet requirement in your reason, or say fail if the page offers no way forward.',
+    );
+    for (const kind of [ALPHA, BETA, SIGMA]) {
+      const p = systemPromptFor(kind);
+      expect(p).toContain('Say done only when');
+      expect(p).toContain(RETRY_RULE);
+      expect(p).toContain('counts as the same target');
+      expect(p).not.toContain('3 times');
+    }
   });
 });
 
@@ -183,6 +219,19 @@ describe('buildUserTurn: Alpha', () => {
     expect(all).not.toContain('y'.repeat(TEXT_CHAR_CAP + 1));
   });
 
+  it('never cuts a surrogate pair in half when truncating', () => {
+    // 'a' shifts every emoji (2 UTF-16 units) to an odd offset, so the cap lands mid-pair.
+    const tree = `a${'\u{1F600}'.repeat((SNAPSHOT_CHAR_CAP + 1000) / 2)}`;
+    const text = `b${'\u{1F600}'.repeat(TEXT_CHAR_CAP / 2)}`;
+    const all = joined(
+      turn(ALPHA, { observation: { ...observation, ariaSnapshot: tree, textExcerpt: text } }),
+    );
+    expect(all).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+    expect(all).not.toMatch(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+    expect(all).toContain(`...[truncated ${1000 + 2} chars]`);
+    expect(all).toContain('...[truncated 2 chars]');
+  });
+
   it('omits observation blocks that are absent', () => {
     const blocks = turn(ALPHA, {
       observation: { url: 'http://localhost:5000/', title: 'Northwind' },
@@ -220,6 +269,15 @@ describe('buildUserTurn: Beta', () => {
   it('describes the grammar as x,y and ends with the footer', () => {
     expect(texts(blocks)[0]).toContain('TARGET GRAMMAR: x,y');
     expect(texts(blocks).at(-1)).toContain('Return exactly one action as JSON.');
+  });
+
+  it('does not advertise select in allowedActions (Alpha and Sigma keep it)', () => {
+    expect(hoodieMission.allowedActions).toContain('select');
+    const header = texts(blocks)[0]!;
+    expect(header).toContain('"allowedActions"');
+    expect(header).not.toContain('"select"');
+    expect(header).toContain('"click"');
+    for (const kind of [ALPHA, SIGMA]) expect(texts(turn(kind))[0]).toContain('"select"');
   });
 
   it('says so when the viewport size is unknown', () => {

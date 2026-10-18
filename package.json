@@ -20,7 +20,9 @@
     "lint": "pnpm -r --if-present lint",
     "format": "prettier --write \"**/*.{ts,tsx,js,mjs,json,md,css}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,mjs,json,md,css}\"",
-    "playwright:install": "pnpm --filter @agentproof/agent exec playwright install chromium"
+    "playwright:install": "pnpm --filter @agentproof/agent exec playwright install chromium",
+    "cli": "pnpm --filter @agentproof/agent cli",
+    "llm:smoke": "pnpm --filter @agentproof/agent llm:smoke"
   },
   "devDependencies": {
     "prettier": "^3.9.10",

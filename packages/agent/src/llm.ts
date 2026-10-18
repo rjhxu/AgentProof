@@ -26,6 +26,12 @@ import { estimateCostUsd } from './profiles';
  * user turns; every call returns an LlmUsage so reports can sum cost.
  */
 
+/**
+ * Default output cap. In xAI Responses mode `max_output_tokens` bounds reasoning tokens as well
+ * as the visible reply, so a medium/high-effort step whose thinking alone exceeds the cap comes
+ * back incomplete with a truncated (unparseable) JSON body. Callers running those efforts should
+ * pass a higher `maxTokens` (8192+); the mission generator does.
+ */
 const DEFAULT_MAX_TOKENS = 4096;
 const DEFAULT_TIMEOUT_MS = 90_000;
 const DEFAULT_MAX_RETRIES = 3;
@@ -89,13 +95,17 @@ function isAbortError(err: unknown): boolean {
   return err.name === 'AbortError' || err.name === 'TimeoutError';
 }
 
+/**
+ * Text blocks across every turn; images only from user turns. Assistant turns are replayed as
+ * plain text (see textOf), so an image block there is never sent and must not count as input.
+ */
 function countBlocks(messages: LlmMessage[]): { text: number; images: number } {
   let text = 0;
   let images = 0;
   for (const message of messages) {
     for (const block of message.content) {
-      if (block.type === 'image') images += 1;
-      else text += 1;
+      if (block.type !== 'image') text += 1;
+      else if (message.role === 'user') images += 1;
     }
   }
   return { text, images };
@@ -177,6 +187,29 @@ function debugLog(
   );
 }
 
+/** Finish reasons that mean the output cap cut the reply (Responses, chat and Anthropic). */
+const TRUNCATED_FINISH_REASONS = new Set(['max_output_tokens', 'length', 'max_tokens']);
+
+/**
+ * AGENTPROOF_LLM_DEBUG=1 only. A structured reply cut off at the output cap is the usual cause
+ * of "json undefined" on a high-effort step, and in Responses mode the cap includes reasoning.
+ */
+function debugTruncated(
+  label: string,
+  req: LlmRequest,
+  finishReason: string | undefined,
+  json: unknown,
+): void {
+  if (process.env.AGENTPROOF_LLM_DEBUG !== '1') return;
+  if (!req.jsonSchema || json !== undefined) return;
+  if (finishReason === undefined || !TRUNCATED_FINISH_REASONS.has(finishReason)) return;
+  console.error(
+    `[llm] ${label} model=${req.model} structured reply truncated at ` +
+      `maxTokens=${req.maxTokens ?? DEFAULT_MAX_TOKENS} (finishReason=${finishReason}); ` +
+      'the cap includes reasoning tokens, raise maxTokens for medium/high effort',
+  );
+}
+
 const defaultSleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -203,8 +236,16 @@ async function safeText(res: Response): Promise<string> {
   }
 }
 
+/** Inline image payloads a provider may echo back in an error body. */
+const DATA_URL_RE = /data:[a-z]+\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]*/gi;
+/** Any long base64 run, so a payload echoed without its data: prefix still never reaches a log. */
+const LONG_BASE64_RE = /[A-Za-z0-9+/]{100,}={0,2}/g;
+
+/** Error-body excerpt safe for logs: key redacted, image data and long base64 runs replaced. */
 function excerpt(body: string, secret: string): string {
-  const redacted = secret ? body.split(secret).join('[redacted]') : body;
+  const redacted = (secret ? body.split(secret).join('[redacted]') : body)
+    .replace(DATA_URL_RE, '[image]')
+    .replace(LONG_BASE64_RE, '[base64]');
   return redacted.replace(/\s+/g, ' ').trim().slice(0, BODY_EXCERPT_CHARS);
 }
 
@@ -446,6 +487,7 @@ export function createXaiClient(opts: XaiClientOptions): LlmClient {
     for (let attempt = 0; ; attempt += 1) {
       const started = Date.now();
       let res: Response;
+      let rawText = '';
       try {
         res = await fetchImpl(url, {
           method: 'POST',
@@ -453,6 +495,9 @@ export function createXaiClient(opts: XaiClientOptions): LlmClient {
           body,
           signal: AbortSignal.timeout(timeoutMs),
         });
+        // The timeout keeps running while the body downloads, so a slow or dropped body is a
+        // timeout/network failure like the request itself and takes the same retry branch.
+        if (res.ok) rawText = await res.text();
       } catch (err) {
         waitedMs += Date.now() - started;
         const timedOut = isAbortError(err);
@@ -478,7 +523,6 @@ export function createXaiClient(opts: XaiClientOptions): LlmClient {
         continue;
       }
 
-      const rawText = await safeText(res);
       waitedMs += Date.now() - started;
       let parsedBody: unknown;
       try {
@@ -505,6 +549,7 @@ export function createXaiClient(opts: XaiClientOptions): LlmClient {
       const usage = buildUsage(reply.usage, blocks.images, waitedMs, [model, req.model]);
       const json = req.jsonSchema ? parseJsonText(reply.text) : undefined;
       debugLog(`xai/${mode}`, model, blocks, usage);
+      debugTruncated(`xai/${mode}`, req, reply.finishReason, json);
       return {
         text: reply.text,
         ...(json === undefined ? {} : { json }),
@@ -528,9 +573,11 @@ export interface AnthropicClientOptions {
   apiKey: string;
   baseUrl?: string;
   maxRetries?: number;
+  /** Injectable for tests; forwarded to the SDK's own `fetch` option. */
+  fetchImpl?: typeof fetch;
 }
 
-function toAnthropicBlock(block: LlmContentBlock): Anthropic.Messages.ContentBlockParam {
+function toAnthropicBlock(block: LlmContentBlock): Anthropic.Beta.Messages.BetaContentBlockParam {
   if (block.type === 'text') return { type: 'text', text: block.text };
   return {
     type: 'image',
@@ -567,36 +614,41 @@ export function createAnthropicClient(opts: AnthropicClientOptions): LlmClient {
     apiKey,
     maxRetries: opts.maxRetries ?? DEFAULT_MAX_RETRIES,
     ...(opts.baseUrl ? { baseURL: opts.baseUrl } : {}),
+    ...(opts.fetchImpl ? { fetch: opts.fetchImpl } : {}),
   });
 
   async function complete(req: LlmRequest): Promise<LlmResponse> {
     const blocks = countBlocks(req.messages);
-    const messages: Anthropic.Messages.MessageParam[] = req.messages.map((message) =>
+    const messages: Anthropic.Beta.Messages.BetaMessageParam[] = req.messages.map((message) =>
       message.role === 'assistant'
         ? { role: 'assistant', content: textOf(message.content) }
         : { role: 'user', content: message.content.map(toAnthropicBlock) },
     );
-    const outputConfig: Anthropic.Messages.OutputConfig = {};
+    const outputConfig: Anthropic.Beta.Messages.BetaOutputConfig = {};
     if (req.effort) outputConfig.effort = req.effort;
     if (req.jsonSchema)
       outputConfig.format = { type: 'json_schema', schema: req.jsonSchema.schema };
-    const params: Anthropic.Messages.MessageCreateParamsNonStreaming = {
+    // The beta Messages resource is the one whose params declare `betas` and `fallbacks`: its
+    // create() moves `betas` into the anthropic-beta header and posts `fallbacks` in the body
+    // (the server-side refusal fallback, see ./claude). The non-beta resource would send both
+    // as unknown body fields and the API would reject every request with a 400.
+    const params: Anthropic.Beta.Messages.MessageCreateParamsNonStreaming = {
       model: req.model,
       max_tokens: req.maxTokens ?? DEFAULT_MAX_TOKENS,
       system: req.system,
       messages,
+      betas: [...FALLBACKS.betas],
+      fallbacks: FALLBACKS.fallbacks,
       ...(Object.keys(outputConfig).length > 0 ? { output_config: outputConfig } : {}),
       ...(req.temperature === undefined ? {} : { temperature: req.temperature }),
     };
 
     const started = Date.now();
-    let message: Anthropic.Messages.Message;
+    let message: Anthropic.Beta.Messages.BetaMessage;
     try {
-      // FALLBACKS enables the server-side refusal fallback (see ./claude).
-      message = await client.messages.create(
-        { ...params, ...FALLBACKS },
-        { timeout: req.timeoutMs ?? DEFAULT_TIMEOUT_MS },
-      );
+      message = await client.beta.messages.create(params, {
+        timeout: req.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      });
     } catch (err) {
       throw toAnthropicError(err);
     }
@@ -608,7 +660,7 @@ export function createAnthropicClient(opts: AnthropicClientOptions): LlmClient {
       });
     }
     const text = message.content
-      .filter((block): block is Anthropic.Messages.TextBlock => block.type === 'text')
+      .filter((block): block is Anthropic.Beta.Messages.BetaTextBlock => block.type === 'text')
       .map((block) => block.text)
       .join('');
     const u = message.usage;
@@ -624,6 +676,7 @@ export function createAnthropicClient(opts: AnthropicClientOptions): LlmClient {
     const usage = buildUsage(raw, blocks.images, latencyMs, [message.model, req.model]);
     const json = req.jsonSchema ? parseJsonText(text) : undefined;
     debugLog('anthropic', message.model, blocks, usage);
+    debugTruncated('anthropic', req, message.stop_reason ?? undefined, json);
     return {
       text,
       ...(json === undefined ? {} : { json }),
@@ -642,7 +695,14 @@ export function createAnthropicClient(opts: AnthropicClientOptions): LlmClient {
 // Mock (tests)
 // ---------------------------------------------------------------------------------------------
 
-export type MockLlmScriptEntry = Partial<LlmResponse> | ((req: LlmRequest) => Partial<LlmResponse>);
+/** A scripted reply: any subset of LlmResponse, with usage itself allowed to be partial. */
+export type MockLlmPartialResponse = Omit<Partial<LlmResponse>, 'usage'> & {
+  usage?: Partial<LlmUsage>;
+};
+
+export type MockLlmScriptEntry =
+  | MockLlmPartialResponse
+  | ((req: LlmRequest) => MockLlmPartialResponse);
 
 export interface MockLlmClient extends LlmClient {
   provider: 'mock';
@@ -663,7 +723,7 @@ export function createMockLlm(script: MockLlmScriptEntry[]): MockLlmClient {
     requests.push(req);
     const entry = script[Math.min(index, script.length - 1)];
     index += 1;
-    const partial: Partial<LlmResponse> =
+    const partial: MockLlmPartialResponse =
       entry === undefined ? {} : typeof entry === 'function' ? entry(req) : entry;
     const text = partial.text ?? (partial.json === undefined ? '' : JSON.stringify(partial.json));
     let json = partial.json;
@@ -706,12 +766,34 @@ const PROVIDER_HELP =
   'Set GROK_API_KEY (or XAI_API_KEY) for xAI Grok, or ANTHROPIC_API_KEY for Anthropic; ' +
   'AGENTPROOF_LLM_PROVIDER=xai|anthropic forces one. See .env.example.';
 
+/**
+ * xAI endpoint root: XAI_BASE_URL when set (a gateway or proxy in front of api.x.ai, e.g. a
+ * hackathon relay), else https://api.x.ai/v1. The adapter appends /responses or
+ * /chat/completions, so the value must end at the API version segment.
+ */
+export function resolveXaiBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
+  return (envValue(env, 'XAI_BASE_URL') ?? XAI_DEFAULT_BASE_URL).replace(/\/+$/, '');
+}
+
+/** Test hooks for createLlmFromEnv(); production callers pass nothing. */
+export interface LlmEnvOverrides {
+  fetchImpl?: typeof fetch;
+  sleep?: (ms: number) => Promise<void>;
+}
+
 /** Build a client from the environment (no singleton). getLlm() caches the result. */
-export function createLlmFromEnv(env: NodeJS.ProcessEnv = process.env): LlmClient {
+export function createLlmFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  overrides: LlmEnvOverrides = {},
+): LlmClient {
   const xaiKey = envValue(env, 'XAI_API_KEY') ?? envValue(env, 'GROK_API_KEY');
   const anthropicKey = envValue(env, 'ANTHROPIC_API_KEY');
   const forced = envValue(env, 'AGENTPROOF_LLM_PROVIDER')?.toLowerCase();
   const provider = forced ?? (xaiKey ? 'xai' : anthropicKey ? 'anthropic' : undefined);
+  const hooks = {
+    ...(overrides.fetchImpl ? { fetchImpl: overrides.fetchImpl } : {}),
+    ...(overrides.sleep ? { sleep: overrides.sleep } : {}),
+  };
 
   if (provider === 'xai') {
     if (!xaiKey) {
@@ -725,8 +807,12 @@ export function createLlmFromEnv(env: NodeJS.ProcessEnv = process.env): LlmClien
         provider: 'xai',
       });
     }
-    const baseUrl = envValue(env, 'XAI_BASE_URL');
-    return createXaiClient({ apiKey: xaiKey, mode: modeRaw, ...(baseUrl ? { baseUrl } : {}) });
+    return createXaiClient({
+      apiKey: xaiKey,
+      mode: modeRaw,
+      baseUrl: resolveXaiBaseUrl(env),
+      ...hooks,
+    });
   }
   if (provider === 'anthropic') {
     if (!anthropicKey) {
@@ -735,7 +821,10 @@ export function createLlmFromEnv(env: NodeJS.ProcessEnv = process.env): LlmClien
         { provider: 'anthropic' },
       );
     }
-    return createAnthropicClient({ apiKey: anthropicKey });
+    return createAnthropicClient({
+      apiKey: anthropicKey,
+      ...(hooks.fetchImpl ? { fetchImpl: hooks.fetchImpl } : {}),
+    });
   }
   if (provider !== undefined) {
     throw new LlmError(`Unknown AGENTPROOF_LLM_PROVIDER "${provider}". ${PROVIDER_HELP}`, {
@@ -901,7 +990,11 @@ export function toStrictJsonSchema(zodSchema: z.ZodType, name: string): LlmJsonS
   return { name, schema };
 }
 
-/** Recursively drop null-valued object keys so nullable-for-optional fields parse back with Zod. */
+/**
+ * Recursively drop every null-valued object key. Schema-blind: it cannot tell an optional field
+ * (null means "absent") from a .nullable() one (null is a value), so prefer fromStrictJson(),
+ * which knows the difference. Kept for callers that have no Zod schema at hand.
+ */
 export function stripNulls<T>(value: T): T {
   if (Array.isArray(value)) return value.map((item: unknown) => stripNulls(item)) as T;
   if (isRecord(value)) {
@@ -914,6 +1007,12 @@ export function stripNulls<T>(value: T): T {
   return value;
 }
 
+/**
+ * The slice of Zod's internal definition (`schema._zod.def`) that decodeStrict() reads. This is
+ * not public API: the field names are the ones Zod 4.6 uses. The "round-trips every wrapper
+ * kind" test in llm.test.ts exercises each case below on the installed Zod, so a rename in a
+ * future Zod release fails that test instead of silently breaking mission or action parsing.
+ */
 interface ZodDefLike {
   type: string;
   shape?: Record<string, unknown>;
@@ -932,66 +1031,94 @@ function zodDef(schema: unknown): ZodDefLike | undefined {
   return def && typeof def.type === 'string' ? def : undefined;
 }
 
-/** Fold {key, value} pair lists back into objects wherever the Zod schema has a record. */
-function restoreRecords(schema: unknown, value: unknown): unknown {
+/** Public Zod API, used to pick the union branch a decoded value belongs to. */
+function zodAccepts(schema: unknown, value: unknown): boolean {
+  const candidate = schema as { safeParse?: (v: unknown) => { success: boolean } } | undefined;
+  return typeof candidate?.safeParse === 'function' && candidate.safeParse(value).success;
+}
+
+/**
+ * Marker for "leave this key out". JSON never carries undefined, so it cannot collide with data;
+ * object decoding turns it into a missing key, which is what Zod's optional/default expect.
+ */
+const DROP = undefined;
+
+/**
+ * Walk the Zod schema beside the decoded JSON and undo the strict encoding:
+ *   optional / default   null means "absent": drop the key so Zod applies the default
+ *   nullable             null is a value: keep it
+ *   record               a {key, value} pair list folds back into an object
+ * Everything else passes through untouched, so a null where the schema allows none still
+ * reaches Zod and produces a precise validation error rather than a silent drop.
+ */
+function decodeStrict(schema: unknown, value: unknown): unknown {
   const def = zodDef(schema);
   if (!def) return value;
   switch (def.type) {
     case 'optional':
-    case 'nullable':
     case 'default':
     case 'prefault':
+      return value === null ? DROP : decodeStrict(def.innerType, value);
+    case 'nullable':
+      return value === null ? null : decodeStrict(def.innerType, value);
     case 'nonoptional':
     case 'readonly':
     case 'catch':
     case 'promise':
-      return restoreRecords(def.innerType, value);
+      return decodeStrict(def.innerType, value);
     case 'pipe':
-      return restoreRecords(def.in, value);
+      return decodeStrict(def.in, value);
     case 'lazy':
-      return restoreRecords(def.getter?.(), value);
+      return decodeStrict(def.getter?.(), value);
     case 'intersection':
-      return restoreRecords(def.right, restoreRecords(def.left, value));
+      return decodeStrict(def.right, decodeStrict(def.left, value));
     case 'union': {
-      for (const option of def.options ?? []) {
-        const restored = restoreRecords(option, value);
-        if (restored !== value) return restored;
+      if (value === null) return null;
+      const options = def.options ?? [];
+      let first: unknown = value;
+      let seen = false;
+      for (const option of options) {
+        const decoded = decodeStrict(option, value);
+        if (zodAccepts(option, decoded)) return decoded;
+        if (!seen) {
+          first = decoded;
+          seen = true;
+        }
       }
-      return value;
+      return first;
     }
     case 'object': {
       if (!isRecord(value) || !def.shape) return value;
-      let changed = false;
-      const out: JsonObject = { ...value };
-      for (const [key, child] of Object.entries(def.shape)) {
-        if (!(key in out)) continue;
-        const restored = restoreRecords(child, out[key]);
-        if (restored !== out[key]) {
-          out[key] = restored;
-          changed = true;
-        }
+      const out: JsonObject = {};
+      for (const [key, item] of Object.entries(value)) {
+        const child = def.shape[key];
+        const decoded = child === undefined ? item : decodeStrict(child, item);
+        if (decoded !== DROP) out[key] = decoded;
       }
-      return changed ? out : value;
+      return out;
     }
     case 'array': {
       if (!Array.isArray(value)) return value;
-      let changed = false;
-      const out = value.map((item: unknown) => {
-        const restored = restoreRecords(def.element, item);
-        if (restored !== item) changed = true;
-        return restored;
-      });
-      return changed ? out : value;
+      return value.map((item: unknown) => decodeStrict(def.element, item));
     }
     case 'record': {
-      if (!Array.isArray(value)) return value;
-      const out: JsonObject = {};
-      for (const pair of value) {
-        if (isRecord(pair) && typeof pair.key === 'string') {
-          out[pair.key] = restoreRecords(def.valueType, pair.value);
+      if (Array.isArray(value)) {
+        const out: JsonObject = {};
+        for (const pair of value) {
+          if (isRecord(pair) && typeof pair.key === 'string') {
+            out[pair.key] = decodeStrict(def.valueType, pair.value);
+          }
         }
+        return out;
       }
-      return out;
+      if (isRecord(value)) {
+        const out: JsonObject = {};
+        for (const [key, item] of Object.entries(value)) {
+          out[key] = decodeStrict(def.valueType, item);
+        }
+        return out;
+      }
+      return value;
     }
     default:
       return value;
@@ -999,9 +1126,10 @@ function restoreRecords(schema: unknown, value: unknown): unknown {
 }
 
 /**
- * Undo the strict-schema encoding of toStrictJsonSchema(): drop nulls and fold key/value pair
- * lists back into records. The result is ready for `zodSchema.parse()`.
+ * Undo the strict-schema encoding of toStrictJsonSchema() with the Zod schema as the guide: null
+ * on an optional/default field drops the key, null on a .nullable() field stays null, and
+ * {key, value} pair lists fold back into records. The result is ready for `zodSchema.parse()`.
  */
 export function fromStrictJson(zodSchema: z.ZodType, json: unknown): unknown {
-  return restoreRecords(zodSchema, stripNulls(json));
+  return decodeStrict(zodSchema, json);
 }

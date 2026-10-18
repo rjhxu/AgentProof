@@ -12,6 +12,12 @@ import type {
   ApplyRepairResponse,
   ConnectRepositoryRequest,
   RepositoryResponse,
+  FixtureMissionRequest,
+  FixtureMissionResponse,
+  GetRunReportResponse,
+  GetMissionReportResponse,
+  Mission,
+  Run,
 } from '@agentproof/shared';
 
 /**
@@ -34,6 +40,14 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(body.error ?? `${res.status} ${res.statusText}`);
   }
   return (await res.json()) as T;
+}
+
+/** GET /missions/:id (no shared schema yet): the mission, its runs, and the mission report path once one exists. */
+export interface GetMissionResponse {
+  mission: Mission;
+  runs: Run[];
+  /** Artifacts-relative path of the cross-agent report JSON, e.g. "missions/mis_abc/report.json" */
+  missionReportPath?: string;
 }
 
 export const api = {
@@ -63,6 +77,31 @@ export const api = {
     call<CompareResponse>(`/runs/${runId}/compare/${otherId}`),
   diagnose: (runId: string) =>
     call<DiagnoseResponse>(`/runs/${runId}/diagnose`, { method: 'POST' }),
+
+  // ---- scenarios, reports and artifacts (W5, Zach) ---------------------------------------------
+  /** Insert one of the storefront's known scenario missions (A-E, control); no model call. */
+  fixtureMission: (body: FixtureMissionRequest) =>
+    call<FixtureMissionResponse>('/missions/fixture', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  getMission: (missionId: string) => call<GetMissionResponse>(`/missions/${missionId}`),
+  /** 404 ("report not ready") until the run has a verdict and jobs.ts has written its report. */
+  getRunReport: (runId: string) => call<GetRunReportResponse>(`/runs/${runId}/report`),
+  /** Rebuilt on every call from the mission's finished runs; 404 until one has finished. */
+  getMissionReport: (missionId: string) =>
+    call<GetMissionReportResponse>(`/missions/${missionId}/report`),
+  /** text/markdown rendering of the same run report, for "open as Markdown" links. */
+  runReportMarkdownUrl: (runId: string) => `${BASE}/runs/${runId}/report.md`,
+  missionReportMarkdownUrl: (missionId: string) => `${BASE}/missions/${missionId}/report.md`,
+  /** URL of an artifact (screenshot, aria snapshot, trace, report) by its artifacts-relative path. */
+  artifactUrl: (relativePath: string) =>
+    `${BASE}/artifacts/${relativePath
+      .replace(/\\/g, '/')
+      .replace(/^\/+/, '')
+      .split('/')
+      .map(encodeURIComponent)
+      .join('/')}`,
 
   /** Subscribe to live run events. Returns an unsubscribe function. Browser only. */
   subscribe(runId: string, onEvent: (e: RunEvent) => void): () => void {

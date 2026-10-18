@@ -120,12 +120,12 @@ function parseRole(raw: string): ParsedTarget {
   const name = stripQuotes(raw.slice(i + 1));
   if (!ROLE_SET.has(role)) {
     return invalid(
-      `unknown role "${role}" in target "${raw}"; the role must be one of ${ARIA_ROLES.join(', ')}`,
+      `"${raw}" has an unknown role "${role}"; the role must be one of ${ARIA_ROLES.join(', ')}`,
     );
   }
   if (!name) {
     return invalid(
-      `target "${raw}" has no accessible name after the role; use role:name with the exact name from the accessibility tree, e.g. button:Add to cart`,
+      `"${raw}" has no accessible name after the role; use role:name with the exact name from the accessibility tree, e.g. button:Add to cart`,
     );
   }
   return { kind: 'role', role, name };
@@ -137,12 +137,12 @@ function parseCoord(raw: string, viewport?: Viewport): ParsedTarget {
   const y = Number(m?.[2] ?? NaN);
   if (!Number.isInteger(x) || !Number.isInteger(y) || x < 0 || y < 0) {
     return invalid(
-      `target "${raw}" must be two non-negative integers x,y inside the screenshot, e.g. 412,388`,
+      `"${raw}" must be two non-negative integers x,y inside the screenshot, e.g. 412,388`,
     );
   }
   if (viewport && (x >= viewport.width || y >= viewport.height)) {
     return invalid(
-      `target "${raw}" is outside the ${viewport.width}x${viewport.height} screenshot; coordinates must be inside the image`,
+      `"${raw}" is outside the ${viewport.width}x${viewport.height} screenshot; coordinates must be inside the image`,
     );
   }
   return { kind: 'coord', x, y };
@@ -158,6 +158,10 @@ function parseCoord(raw: string, viewport?: Viewport): ParsedTarget {
  * One layer of quotes around the whole target is ignored, so "button:Add to cart" (quoted) parses
  * like button:Add to cart. A grammar the kind does not allow, an unknown role, an empty name, and
  * anything else (CSS, text=, xpath) are invalid, with a reason the model can act on next turn.
+ *
+ * Invalid reasons for a non-empty target start with the quoted target itself ('"M" is not
+ * role:name; use ...'), never with the word "target", so a caller may prefix the action and the
+ * noun: toAgentAction() turns them into 'click target "M" is not role:name; use ...'.
  */
 export function parseTarget(target: string, kind: AgentKind, viewport?: Viewport): ParsedTarget {
   const allowed = targetGrammars(kind);
@@ -165,13 +169,13 @@ export function parseTarget(target: string, kind: AgentKind, viewport?: Viewport
     return invalid(`agent ${kind} does not take targets (it has no browser)`);
   }
   const raw = typeof target === 'string' ? stripQuotes(target) : '';
-  if (!raw) return invalid(`target is empty; use ${describeTargetGrammar(kind)}`);
+  if (!raw) return invalid(`empty target; use ${describeTargetGrammar(kind)}`);
 
   const shape = targetShape(raw);
   if (shape === 'x,y') {
     if (!allowed.includes('x,y')) {
       return invalid(
-        `target "${raw}" is x,y coordinates, which this agent cannot use; use ${describeTargetGrammar(kind)}`,
+        `"${raw}" is x,y coordinates, which this agent cannot use; use ${describeTargetGrammar(kind)}`,
       );
     }
     return parseCoord(raw, viewport);
@@ -179,14 +183,12 @@ export function parseTarget(target: string, kind: AgentKind, viewport?: Viewport
   if (shape === 'role:name') {
     if (!allowed.includes('role:name')) {
       return invalid(
-        `target "${raw}" is role:name, which this agent cannot use; use ${describeTargetGrammar(kind)}`,
+        `"${raw}" is role:name, which this agent cannot use; use ${describeTargetGrammar(kind)}`,
       );
     }
     return parseRole(raw);
   }
-  return invalid(
-    `target "${raw}" is not ${allowed.join(' or ')}; use ${describeTargetGrammar(kind)}`,
-  );
+  return invalid(`"${raw}" is not ${allowed.join(' or ')}; use ${describeTargetGrammar(kind)}`);
 }
 
 /** Canonical one-line form: `button:Add to cart`, `412,388`, or `invalid target (...)`. */
@@ -231,9 +233,10 @@ function labelOf(groupOrTarget: string): string {
  * radio named `value` -> combobox named `group` -> button named `value`.
  * Returns which rung worked; throws when none exists in the accessibility tree.
  *
- * This is the only option executor and it never takes coordinates: toAgentAction() rejects a
- * `select` whose target is x,y (and every `select` from Beta), so a vision agent cannot reach the
- * accessibility tree through this ladder.
+ * This is the only option executor and it never takes coordinates: toAgentAction() rejects every
+ * `select` from Beta (it picks options by clicking them) and any `select` whose target is x,y, so
+ * a vision agent cannot reach the accessibility tree through this ladder. Names are matched
+ * exactly and case-sensitively, as the grader does: "navy" does not find the radio "Navy".
  */
 export async function chooseOption(
   page: Page,
