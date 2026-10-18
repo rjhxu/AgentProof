@@ -1,7 +1,8 @@
 /**
  * GitHub REST client with an operation allowlist.
  * The client can only: read repository metadata, open draft pull requests,
- * and (for GitHub App auth) find installations and mint tokens.
+ * and (for GitHub App auth) find installations, list them and their repositories,
+ * and mint tokens.
  * A merge operation cannot be expressed; tests assert it.
  */
 
@@ -101,6 +102,8 @@ export interface AllowedOperation {
   method: GitHubMethod;
   pattern: RegExp;
   purpose: string;
+  /** May carry only `?per_page=<digits>&page=<digits>`. Every other query is refused. */
+  paginated?: true;
 }
 
 /**
@@ -127,7 +130,22 @@ export const ALLOWED_OPERATIONS: readonly AllowedOperation[] = [
     pattern: /^\/app\/installations\/\d+\/access_tokens$/,
     purpose: 'GitHub App: mint a short-lived installation token',
   },
+  {
+    method: 'GET',
+    pattern: /^\/app\/installations$/,
+    purpose: 'GitHub App: list the installations of this app',
+    paginated: true,
+  },
+  {
+    method: 'GET',
+    pattern: /^\/installation\/repositories$/,
+    purpose: 'GitHub App: list the repositories one installation covers',
+    paginated: true,
+  },
 ];
+
+/** The only query an allowlisted operation may carry, and only when it is marked paginated. */
+const PAGE_QUERY = /^\?per_page=[0-9]+&page=[0-9]+$/;
 
 export function isAllowedOperation(method: string, path: string): boolean {
   return ALLOWED_OPERATIONS.some((op) => op.method === method && op.pattern.test(path));
@@ -159,19 +177,27 @@ export class GitHubClient {
    * Throws GitHubRequestError on non-2xx responses.
    */
   async request<T = unknown>(method: GitHubMethod, path: string, body?: unknown): Promise<T> {
-    // Validate path: must start with /, no query strings, no ..
+    // Validate path: must start with /, no .., and a query only on a paginated operation.
     if (!path.startsWith('/')) {
-      throw new GitHubOperationRefused(method, path);
-    }
-    if (path.includes('?')) {
       throw new GitHubOperationRefused(method, path);
     }
     if (path.includes('..')) {
       throw new GitHubOperationRefused(method, path);
     }
+    const queryAt = path.indexOf('?');
+    const pathname = queryAt === -1 ? path : path.slice(0, queryAt);
+    const query = queryAt === -1 ? '' : path.slice(queryAt);
+    if (pathname.includes('?') || pathname.includes('#')) {
+      throw new GitHubOperationRefused(method, path);
+    }
 
-    // Check if operation is allowed
-    if (!isAllowedOperation(method, path)) {
+    const operation = ALLOWED_OPERATIONS.find(
+      (op) => op.method === method && op.pattern.test(pathname),
+    );
+    if (!operation) {
+      throw new GitHubOperationRefused(method, path);
+    }
+    if (query !== '' && !(operation.paginated && PAGE_QUERY.test(query))) {
       throw new GitHubOperationRefused(method, path);
     }
 

@@ -89,6 +89,11 @@ describe('isAllowedOperation', () => {
     expect(isAllowedOperation('POST', '/app/installations/123/access_tokens')).toBe(true);
   });
 
+  it('allows GET /app/installations and GET /installation/repositories', () => {
+    expect(isAllowedOperation('GET', '/app/installations')).toBe(true);
+    expect(isAllowedOperation('GET', '/installation/repositories')).toBe(true);
+  });
+
   it('rejects PUT /repos/o/r/pulls/1/merge', () => {
     expect(isAllowedOperation('PUT', '/repos/o/r/pulls/1/merge')).toBe(false);
   });
@@ -151,6 +156,31 @@ describe('GitHubClient.request', () => {
       GitHubOperationRefused,
     );
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('accepts only per_page and page on a paginated operation', async () => {
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    const client = new GitHubClient({ token: 'tok_123', fetch: mockFetch });
+    await client.request('GET', '/app/installations?per_page=100&page=2');
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://api.github.com/app/installations?per_page=100&page=2',
+      expect.objectContaining({ method: 'GET' }),
+    );
+
+    await expect(
+      client.request('GET', '/app/installations?page=2&per_page=100'),
+    ).rejects.toBeInstanceOf(GitHubOperationRefused);
+    await expect(client.request('GET', '/repos/o/r?per_page=100&page=1')).rejects.toBeInstanceOf(
+      GitHubOperationRefused,
+    );
+    await expect(
+      client.request('GET', '/installation/repositories?per_page=100&page=1&foo=1'),
+    ).rejects.toBeInstanceOf(GitHubOperationRefused);
   });
 
   it('sends correct headers for allowed operation', async () => {

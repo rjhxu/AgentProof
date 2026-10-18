@@ -329,3 +329,20 @@ export type GitHubAppStatus = z.infer<typeof GitHubAppStatus>;
 
 export const GitHubAppStatusResponse = z.object({ app: GitHubAppStatus });
 export type GitHubAppStatusResponse = z.infer<typeof GitHubAppStatusResponse>;
+
+/** One repository the GitHub App is installed on. GET /github/app/repositories. */
+export const GitHubAppRepository = z.object({
+  fullName: z.string(),
+  url: z.url(),
+  private: z.boolean(),
+  defaultBranch: z.string(),
+  installationId: z.number().int().positive(),
+  account: z.string(),
+});
+export type GitHubAppRepository = z.infer<typeof GitHubAppRepository>;
+
+export const GitHubAppRepositoriesResponse = z.object({
+  app: GitHubAppStatus,
+  repositories: z.array(GitHubAppRepository),
+});
+export type GitHubAppRepositoriesResponse = z.infer<typeof GitHubAppRepositoriesResponse>;

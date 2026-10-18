@@ -36,6 +36,8 @@ export type FixesStepProps = {
   reading?: ReadingProgress;
   /** "Open draft pull requests": idle, in progress, or every requested one answered. */
   opening: 'idle' | 'pending' | 'done';
+  /** The connection already asked for draft pull requests, so this step opens them itself. */
+  autoOpen?: boolean;
   onOpen: () => void;
   /** Problems the agent could not propose a change for, listed quietly after the cards. */
   failed?: Array<{ issue: Issue; error: string }>;
@@ -283,7 +285,9 @@ export function FixesStep(p: FixesStepProps) {
             ? `Looking through ${p.repository.fullName} for the code behind each problem.`
             : count === 0
               ? `The agent read ${p.repository.fullName} but proposed no change it could validate.`
-              : 'Each change was applied, compiled and rerun against a patched copy of your store before you see it. Open it as a draft pull request, review, and merge when you are happy.'
+              : p.autoOpen && p.opening !== 'done'
+                ? 'Each change was applied, compiled and rerun against a patched copy of your store. Opening a draft pull request for each one; you review and merge.'
+                : 'Each change was applied, compiled and rerun against a patched copy of your store before you see it. Open it as a draft pull request, review, and merge when you are happy.'
         }
       />
 

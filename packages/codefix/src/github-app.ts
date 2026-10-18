@@ -8,6 +8,10 @@
  *             from a file written with mode 0600 in a 0700 directory
  *   jwt       createAppJwt: RS256, backdated 60 s, valid 9 min (GitHub's ceiling is 10)
  *   install   findInstallation: GET /repos/{o}/{r}/installation with the app JWT
+ *   list      listInstallations / listInstallationRepositories: the installations of this app, and the
+ *             repositories each one covers, so the dashboard can offer them. The repository list is read
+ *             with a token minted for metadata only and for no single repository; that token never leaves
+ *             the function.
  *   token     mintInstallationToken: POST /app/installations/{id}/access_tokens, scoped at mint time to
  *             one repository and the minimal permissions of one operation. Minted per operation, never
  *             cached, never persisted.
@@ -573,6 +577,142 @@ export async function mintInstallationToken(
     permissions: granted,
     repositories,
   };
+}
+
+const LIST_PAGE_SIZE = 100;
+/** One thousand repositories or installations is past anything this dashboard lists. */
+const LIST_MAX_PAGES = 10;
+
+export interface AppInstallation {
+  installationId: number;
+  /** account login the app is installed on */
+  account: string;
+  repositorySelection: 'all' | 'selected';
+}
+
+/**
+ * GET /app/installations with a fresh app JWT, one page at a time. An entry without a usable id is
+ * skipped. Stops at a short page or LIST_MAX_PAGES.
+ */
+export async function listInstallations(
+  config: GitHubAppConfig,
+  deps: GitHubAppDeps = {},
+): Promise<AppInstallation[]> {
+  const client = appClient(config, deps);
+  const found: AppInstallation[] = [];
+  for (let page = 1; page <= LIST_MAX_PAGES; page++) {
+    const response = await client.request<unknown>(
+      'GET',
+      `/app/installations?per_page=${LIST_PAGE_SIZE}&page=${page}`,
+    );
+    if (!Array.isArray(response)) {
+      throw new Error('GitHub returned an unexpected installations response');
+    }
+    for (const entry of response) {
+      if (!isRecord(entry)) continue;
+      const installationId = positiveInteger(entry.id);
+      if (installationId === undefined) continue;
+      const account = isRecord(entry.account) ? entry.account : {};
+      const login = [account.login, account.slug].find((v) => typeof v === 'string' && v !== '');
+      found.push({
+        installationId,
+        account: typeof login === 'string' ? login : String(installationId),
+        repositorySelection: entry.repository_selection === 'all' ? 'all' : 'selected',
+      });
+    }
+    if (response.length < LIST_PAGE_SIZE) break;
+  }
+  return found;
+}
+
+export interface InstalledRepository {
+  fullName: string;
+  url: string;
+  private: boolean;
+  defaultBranch: string;
+}
+
+const FULL_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}\/[A-Za-z0-9._-]{1,100}$/;
+
+/**
+ * A token for reading which repositories an installation covers. Unlike mintInstallationToken this
+ * names no repository, so GitHub scopes it to every repository the installation can see, and it asks
+ * only for metadata: read. The token is returned to the caller in this file and nowhere else.
+ */
+async function mintListingToken(
+  installationId: number,
+  config: GitHubAppConfig,
+  deps: GitHubAppDeps,
+): Promise<string> {
+  if (!Number.isSafeInteger(installationId) || installationId <= 0) {
+    throw new Error('Invalid GitHub App installation id');
+  }
+  const requested = requestedPermissions({ metadata: 'read' });
+  const client = appClient(config, deps);
+  const response = await client.request<unknown>(
+    'POST',
+    `/app/installations/${installationId}/access_tokens`,
+    { permissions: requested },
+  );
+  if (!isRecord(response) || typeof response.token !== 'string' || response.token === '') {
+    throw new Error('GitHub returned an installation token response without a token');
+  }
+  const granted = stringRecord(response.permissions);
+  if (levelRank(granted.metadata) < levelRank('read')) {
+    throw new Error(
+      `GitHub did not grant metadata read on installation ${installationId}. ${reinstallHint(config)}`,
+    );
+  }
+  return response.token;
+}
+
+function installedRepository(entry: unknown): InstalledRepository | undefined {
+  if (!isRecord(entry) || typeof entry.full_name !== 'string' || !FULL_NAME.test(entry.full_name)) {
+    return undefined;
+  }
+  const url = httpUrlOrUndefined(entry.html_url) ?? `${WEB_BASE_URL}/${entry.full_name}`;
+  const branch = typeof entry.default_branch === 'string' ? entry.default_branch.trim() : '';
+  if (branch === '') return undefined;
+  return {
+    fullName: entry.full_name,
+    url,
+    private: entry.private === true,
+    defaultBranch: branch,
+  };
+}
+
+/**
+ * The repositories one installation covers. Mints a metadata-only token (no repository named, so it
+ * covers the installation), pages GET /installation/repositories, and drops the token. A repository
+ * without a name and a default branch is skipped.
+ */
+export async function listInstallationRepositories(
+  installationId: number,
+  config: GitHubAppConfig,
+  deps: GitHubAppDeps = {},
+): Promise<InstalledRepository[]> {
+  const token = await mintListingToken(installationId, config, deps);
+  const client = new GitHubClient({
+    token,
+    ...(deps.fetch ? { fetch: deps.fetch } : {}),
+    ...(deps.baseUrl ? { baseUrl: deps.baseUrl } : {}),
+  });
+  const found: InstalledRepository[] = [];
+  for (let page = 1; page <= LIST_MAX_PAGES; page++) {
+    const response = await client.request<unknown>(
+      'GET',
+      `/installation/repositories?per_page=${LIST_PAGE_SIZE}&page=${page}`,
+    );
+    if (!isRecord(response) || !Array.isArray(response.repositories)) {
+      throw new Error('GitHub returned an unexpected installation repositories response');
+    }
+    for (const entry of response.repositories) {
+      const repository = installedRepository(entry);
+      if (repository) found.push(repository);
+    }
+    if (response.repositories.length < LIST_PAGE_SIZE) break;
+  }
+  return found;
 }
 
 // ---------------------------------------------------------------------------------------------

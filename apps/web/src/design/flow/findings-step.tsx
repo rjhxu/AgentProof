@@ -2,12 +2,12 @@
 
 import { useEffect, useId, useReducer, useRef, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import type { ConnectRepositoryRequest } from '@agentproof/shared';
+import type { ConnectRepositoryRequest, GitHubAppRepository } from '@agentproof/shared';
 
 import { plainDetail, shortName, type ScanSummary } from '../format';
 import { CartLines, SenseIcons, TreePanel, VerdictMark } from './agent-bits';
 import type { ProblemData, ShopperResult } from './findings-data';
-import { ArrowRightIcon, BranchIcon, DownloadIcon, SpinnerIcon } from './icons';
+import { ArrowRightIcon, BranchIcon, DownloadIcon, ExternalIcon, SpinnerIcon } from './icons';
 import { FindingsMark } from './illustrations';
 import { StepHeader } from './step-header';
 import {
@@ -31,14 +31,25 @@ export type FindingsStepProps = {
   startAt?: 'start' | 'recap';
   connect: 'closed' | 'open' | 'submitting';
   onOpenConnect: () => void;
-  onConnect: (request: ConnectRepositoryRequest) => void;
+  onConnect: (request: ConnectRepositoryRequest, opts?: { openPullRequests?: boolean }) => void;
   onDownload: () => void;
   /** Why the last connection attempt failed, under the form. */
   connectError?: string;
-  /** The GitHub App is installed: no token field, the app reads the repository. */
-  tokenHidden?: boolean;
+  /**
+   * Present when the runner has a GitHub App: the panel asks to install it and lists the
+   * repositories it covers. Absent, the URL and token form is the whole panel.
+   */
+  app?: AppConnectInfo;
   /** The repository is already connected and read: offer the fixes instead of the connect button. */
   onContinueToFixes?: () => void;
+};
+
+export type AppConnectInfo = {
+  installUrl: string;
+  repositories: GitHubAppRepository[];
+  loading: boolean;
+  error?: string;
+  onRefresh: () => void;
 };
 
 type ConnectProps = Pick<
@@ -48,7 +59,7 @@ type ConnectProps = Pick<
   | 'onConnect'
   | 'onDownload'
   | 'connectError'
-  | 'tokenHidden'
+  | 'app'
   | 'onContinueToFixes'
 >;
 
@@ -61,6 +72,12 @@ const EXIT = { opacity: 0, y: -6, transition: { duration: 0.15 } };
 /** What connecting allows, in full: each fix is checked by rerunning the shopper on a patched copy. */
 const CONSENT =
   'We may clone this repository to read it and run a patched copy of your store on this machine to check each fix. Nothing is written to your repository.';
+/** The GitHub App path also opens a draft pull request for each fix that validates. */
+const APP_CONSENT =
+  'We may clone this repository to read it and run a patched copy of your store on this machine to check each fix. AgentProof will open a draft pull request for each fix it validates, and never merges.';
+const FIELD =
+  'mt-1 h-11 w-full rounded-md border border-[var(--line-strong)] bg-[var(--background)] px-3 text-[15px] outline-none focus:border-[var(--accent)] focus:ring-4 focus:ring-[var(--accent-soft)]';
+const QUIET = 'text-sm text-[var(--muted)] underline-offset-4 hover:underline';
 
 /** One revealed beat: rises in under the one before it, fades when the reader steps back. */
 function BeatBlock({ children }: { children: ReactNode }) {
@@ -299,12 +316,10 @@ function DownloadLink({ onClick }: { onClick: () => void }) {
 function ConnectForm({
   busy,
   error,
-  tokenHidden = false,
   onSubmit,
 }: {
   busy: boolean;
   error?: string;
-  tokenHidden?: boolean;
   onSubmit: (request: ConnectRepositoryRequest) => void;
 }) {
   const id = useId();
@@ -332,24 +347,20 @@ function ConnectForm({
           placeholder="https://github.com/owner/repository"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
-          className="mt-1 h-11 w-full rounded-md border border-[var(--line-strong)] bg-[var(--background)] px-3 text-[15px] outline-none focus:border-[var(--accent)] focus:ring-4 focus:ring-[var(--accent-soft)]"
+          className={FIELD}
         />
       </label>
-      {tokenHidden ? null : (
-        <label className="block text-sm" htmlFor={`${id}-token`}>
-          <span className="text-[var(--muted)]">
-            Read-only token, only for private repositories
-          </span>
-          <input
-            id={`${id}-token`}
-            ref={tokenRef}
-            type="password"
-            // A token is not a saved password: keep the browser from filling one in.
-            autoComplete="new-password"
-            className="mt-1 h-11 w-full rounded-md border border-[var(--line-strong)] bg-[var(--background)] px-3 text-[15px] outline-none focus:border-[var(--accent)] focus:ring-4 focus:ring-[var(--accent-soft)]"
-          />
-        </label>
-      )}
+      <label className="block text-sm" htmlFor={`${id}-token`}>
+        <span className="text-[var(--muted)]">Read-only token, only for private repositories</span>
+        <input
+          id={`${id}-token`}
+          ref={tokenRef}
+          type="password"
+          // A token is not a saved password: keep the browser from filling one in.
+          autoComplete="new-password"
+          className={FIELD}
+        />
+      </label>
       <label className="flex items-start gap-2 text-sm">
         <input
           type="checkbox"
@@ -358,7 +369,7 @@ function ConnectForm({
           className="mt-1 h-4 w-4 accent-[var(--accent)]"
         />
         <span className="text-[var(--muted)]">
-          {tokenHidden ? CONSENT : `${CONSENT} A token is used once and never stored.`}
+          {CONSENT} A token is used once and never stored.
         </span>
       </label>
       <button type="submit" disabled={!ready} className={PRIMARY}>
@@ -374,22 +385,123 @@ function ConnectForm({
   );
 }
 
+/** Install the GitHub App, pick one of the repositories it covers, and connect it. */
+function AppConnect({
+  app,
+  busy,
+  error,
+  onSubmit,
+}: {
+  app: AppConnectInfo;
+  busy: boolean;
+  error?: string;
+  onSubmit: (request: ConnectRepositoryRequest) => void;
+}) {
+  const id = useId();
+  const [fullName, setFullName] = useState('');
+  const [consent, setConsent] = useState(false);
+  const selected = app.repositories.find((repository) => repository.fullName === fullName);
+  const waiting = app.repositories.length === 0;
+  const ready = selected !== undefined && consent && !busy;
+
+  useEffect(() => {
+    if (app.repositories.some((repository) => repository.fullName === fullName)) return;
+    const only = app.repositories.length === 1 ? app.repositories[0] : undefined;
+    setFullName(only?.fullName ?? '');
+  }, [app.repositories, fullName]);
+
+  return (
+    <form
+      className="mx-auto mt-5 max-w-[520px] space-y-3 text-left"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!selected || !ready) return;
+        onSubmit({ url: selected.url, consent: true });
+      }}
+    >
+      <a href={app.installUrl} target="_blank" rel="noreferrer" className={PRIMARY}>
+        <ExternalIcon />
+        {waiting ? 'Add AgentProof to your repositories' : 'Add more repositories'}
+      </a>
+      <p className="text-[13px] leading-snug text-[var(--muted)]">
+        GitHub asks which repositories AgentProof may work on. Come back here and choose one.
+      </p>
+      {waiting ? (
+        <p className="flex items-center gap-2 text-sm text-[var(--muted)]">
+          {app.loading ? <SpinnerIcon /> : null}
+          Waiting for the app on GitHub…
+          <button type="button" onClick={app.onRefresh} className={QUIET}>
+            Refresh
+          </button>
+        </p>
+      ) : (
+        <label className="block text-sm" htmlFor={`${id}-repo`}>
+          <span className="text-[var(--muted)]">Repository</span>
+          <select
+            id={`${id}-repo`}
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
+            className={FIELD}
+          >
+            <option value="">Choose a repository</option>
+            {app.repositories.map((repository) => (
+              <option key={repository.fullName} value={repository.fullName}>
+                {repository.fullName}
+                {repository.private ? ' (private)' : ''}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      {app.error ? (
+        <p role="alert" className="text-[13px] leading-snug text-[var(--fail)]">
+          {app.error}
+        </p>
+      ) : null}
+      <label className="flex items-start gap-2 text-sm">
+        <input
+          type="checkbox"
+          checked={consent}
+          onChange={(e) => setConsent(e.target.checked)}
+          className="mt-1 h-4 w-4 accent-[var(--accent)]"
+        />
+        <span className="text-[var(--muted)]">{APP_CONSENT}</span>
+      </label>
+      <button type="submit" disabled={!ready} className={PRIMARY}>
+        {busy ? <SpinnerIcon /> : <BranchIcon />}
+        {busy ? 'Connecting' : 'Connect and open draft pull requests'}
+      </button>
+      {error ? (
+        <p role="alert" className="text-[13px] leading-snug text-[var(--fail)]">
+          {error}
+        </p>
+      ) : null}
+    </form>
+  );
+}
+
 /** The one action of the step: connect the repository, or download the report instead. */
 function ConnectPanel({
   connect,
   connectError,
-  tokenHidden,
+  app,
   onOpenConnect,
   onConnect,
   onDownload,
   onContinueToFixes,
 }: ConnectProps) {
+  const [manual, setManual] = useState(false);
+  useEffect(() => {
+    if (connect === 'closed') setManual(false);
+  }, [connect]);
+  const showApp = app !== undefined && !manual;
   return (
     <section className="mt-8 rounded-lg border border-[var(--line)] bg-[var(--panel)] p-6 text-center">
       <h3 className="text-[18px] font-semibold">Get fixes for these problems</h3>
       <p className="mx-auto mt-1 max-w-[480px] text-sm leading-relaxed text-[var(--muted)]">
-        Connect the store&apos;s repository. We read the code behind each problem and suggest the
-        change; you decide what to apply.
+        {showApp
+          ? 'Add AgentProof to the store’s repository. We read the code behind each problem and open a draft pull request for each fix; you review and merge.'
+          : 'Connect the store’s repository. We read the code behind each problem and suggest the change; you decide what to apply.'}
       </p>
       <AnimatePresence mode="wait" initial={false}>
         {connect === 'closed' ? (
@@ -401,11 +513,7 @@ function ConnectPanel({
                   <ArrowRightIcon />
                 </button>
                 <p className="mt-3 text-sm">
-                  <button
-                    type="button"
-                    onClick={onOpenConnect}
-                    className="text-[var(--muted)] underline-offset-4 hover:underline"
-                  >
+                  <button type="button" onClick={onOpenConnect} className={QUIET}>
                     Connect a different repository
                   </button>
                 </p>
@@ -425,12 +533,36 @@ function ConnectPanel({
             transition={{ duration: 0.3, ease: 'easeOut' }}
             className="overflow-hidden"
           >
-            <ConnectForm
-              busy={connect === 'submitting'}
-              error={connectError}
-              tokenHidden={tokenHidden}
-              onSubmit={onConnect}
-            />
+            {showApp && app ? (
+              <>
+                <AppConnect
+                  app={app}
+                  busy={connect === 'submitting'}
+                  error={connectError}
+                  onSubmit={(request) => onConnect(request, { openPullRequests: true })}
+                />
+                <p className="mt-4 text-sm">
+                  <button type="button" onClick={() => setManual(true)} className={QUIET}>
+                    Use a repository URL and token instead
+                  </button>
+                </p>
+              </>
+            ) : (
+              <>
+                <ConnectForm
+                  busy={connect === 'submitting'}
+                  error={connectError}
+                  onSubmit={onConnect}
+                />
+                {app ? (
+                  <p className="mt-4 text-sm">
+                    <button type="button" onClick={() => setManual(false)} className={QUIET}>
+                      Use the GitHub App instead
+                    </button>
+                  </p>
+                ) : null}
+              </>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
@@ -663,7 +795,7 @@ export function FindingsStep(p: FindingsStepProps) {
               onOpen={(problem) => send({ type: 'GO_TO_PROBLEM', problem })}
               connect={p.connect}
               connectError={p.connectError}
-              tokenHidden={p.tokenHidden}
+              app={p.app}
               onContinueToFixes={p.onContinueToFixes}
               onOpenConnect={p.onOpenConnect}
               onConnect={p.onConnect}
