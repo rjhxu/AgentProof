@@ -2,7 +2,7 @@
 
 The code-fix agent ([CODEFIX.md](./CODEFIX.md)) run for real against the private store repository, with the proposer and the reviewer on `claude-haiku-5-5`. Produced on 2026-10-18 through the runner API with `scripts/run-mission.mjs` and `scripts/codefix.mjs`. Records live under `data/artifacts/codefix/<fixId>/` (gitignored); the fix ids are listed so the files can be found on the machine that ran them.
 
-Setup: the bugged store (`apps/storefront`, same source as the export) on port 5050; the repository `https://github.com/rjhxu/northwind-storefront` (blind export, `baseline` = `d51f863`, 23 files) connected with the `rjhxu` token because the GitHub App was not yet registered on this machine (see "GitHub App" below). Every fix ran in `pull_request` mode with `typecheck`, `review` and `rematch` on, store root `''`.
+Setup: the bugged store (`apps/storefront`, same source as the export) on port 5050; the repository `https://github.com/rjhxu/northwind-storefront` (blind export, `baseline` = `d51f863`, 23 files). Scenarios A to E below were connected and delivered with the `rjhxu` token (the GitHub App was registered later in the session); the final run in "GitHub App" below used the app for both. Every fix ran in `pull_request` mode with `typecheck`, `review` and `rematch` on, store root `''`.
 
 ## The question this answers
 
@@ -56,6 +56,8 @@ Against the reference patches: C +4/−16 (the reference fixes `swatches.ts` and
 
 ## All five scenarios
 
+Merged together into one checkout (5 files, +10/−10), the five branches grade FIXED on every scenario with the control OK, and the agents pass every mission against that store (see the end of this document).
+
 | Scenario | Root-cause file (answer key) | Agent's file          | Agent diff | Reference diff | Grader | Rematch | Fix cost |
 | -------- | ---------------------------- | --------------------- | ---------- | -------------- | ------ | ------- | -------- |
 | A        | `views.ts`                   | `views.ts`            | +5/−4      | +3/−42         | FIXED  | passed  | $0.0037  |
@@ -76,7 +78,26 @@ Totals for the five scenarios end to end: fixes $0.0141 (10 Haiku calls), the fa
 
 ## GitHub App
 
-The manifest flow was exercised against GitHub from the signed-in browser. GitHub rejected the first manifest because an inactive webhook still needs a public URL (fixed: the manifest carries no webhook block), then asked for sudo-mode confirmation (phone or email code), which only the account owner can give. Registration was therefore left for the owner; the runner at `http://localhost:4000/github/app/setup` completes it in one click. Until then the per-request token path is what these results used. The app code is covered by 79 unit tests (JWT signature verified against the public key, token scoping, 0600 key file, manifest conversion); its calls to api.github.com are not yet exercised live.
+Registered by the owner through the one-click manifest flow (GitHub rejected a first manifest because an inactive webhook still needs a public URL, so the manifest now carries no webhook block, and it required sudo-mode confirmation, which only the account owner can give). The app `agentproof-fcb9` (id 5365747) is installed on the `rjhxu` account (installation 172611536), and the runner loads its key from `data/github-app.json` (mode 0600, now gitignored).
+
+Live through the app, with no token in any request: the private repository was cloned with an installation token scoped to `contents: read` (`RepositoryConnection.accessVia = github_app`), and a second fix of scenario B pushed its branch and opened draft PR [#6](https://github.com/rjhxu/northwind-storefront/pull/6) with a token scoped to `contents: write` and `pull_requests: write`, each token good for an hour and never stored. One defect surfaced and was fixed on the way: GitHub's current installation tokens are a few hundred characters long and contain dots and hyphens, which the token validators (`TOKEN_PATTERN` in the runner, the request schemas in shared) did not allow.
+
+The app code is covered by 79 unit tests (JWT signature verified against the public key, token scoping, 0600 key file, manifest conversion) and by this live run.
+
+## The five pull requests merged together
+
+The five branches merged cleanly into one checkout of the store's `main` (5 files, +10/−10; they touch disjoint files). Served on port 5051, that checkout grades FIXED on every scenario with the control OK (`verify-scenarios.mjs --expect=fixed` exits 0), and the agents pass every mission against it with no change to the agents:
+
+| Mission | Agent | Result                  | Steps | Cost    |
+| ------- | ----- | ----------------------- | ----- | ------- |
+| A       | Alpha | passed, all checkpoints | 7     | $0.0028 |
+| B       | Gamma | passed, all checkpoints | 0     | $0      |
+| C       | Alpha | passed, all checkpoints | 6     | $0.0025 |
+| D       | Alpha | passed, all checkpoints | 8     | $0.0032 |
+| E       | Alpha | passed, all checkpoints | 6     | $0.0025 |
+| Control | Alpha | passed, all checkpoints | 6     | $0.0026 |
+
+This is the "after" half of the thesis on the agent's own fixes rather than the reference patches: the cheapest agent completes every mission once the store is repaired. The pull requests themselves are left as drafts for a human to merge.
 
 ## Reproduce
 
