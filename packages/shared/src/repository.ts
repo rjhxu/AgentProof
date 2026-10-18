@@ -24,8 +24,8 @@ export const ConnectRepositoryRequest = z.object({
     .string()
     .trim()
     .min(1)
-    .max(500)
-    .regex(/^[a-zA-Z0-9_]+$/)
+    .max(1024)
+    .regex(/^[A-Za-z0-9._-]+$/)
     .optional(),
   consent: z.literal(true),
 });
