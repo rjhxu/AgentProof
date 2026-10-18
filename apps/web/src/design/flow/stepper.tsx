@@ -19,7 +19,17 @@ export function Stepper({ current, busy, onJump }: StepperProps) {
   return (
     <header className="sticky top-0 z-10 h-[var(--stepper-h)] border-b border-[var(--line)] bg-[var(--background)]/90 backdrop-blur">
       <div className="mx-auto flex h-full max-w-[880px] items-center justify-between px-6">
-        <span className="text-sm font-semibold tracking-tight">AgentProof</span>
+        <span className="flex items-center gap-2 text-sm font-semibold tracking-tight">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/design/agent-proof-mark.png"
+            alt=""
+            width={41}
+            height={28}
+            className="h-7 w-auto shrink-0"
+          />
+          AgentProof
+        </span>
         <ol className="flex items-center" aria-label="Progress">
           {FLOW_STEPS.map((step, i) => {
             const done = i < currentIndex;
