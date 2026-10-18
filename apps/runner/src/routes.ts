@@ -1,21 +1,34 @@
+import fs from 'node:fs';
 import type { FastifyInstance } from 'fastify';
-import { generateMission } from '@agentproof/agent';
+import fastifyStatic from '@fastify/static';
+import { generateMission, scenarioMission } from '@agentproof/agent';
 import { diagnose } from '@agentproof/diagnostics';
 import { compareRuns } from '@agentproof/verifier';
 import {
   AgentConfig,
   CreateMissionRequest,
+  FixtureMissionRequest,
   StartRunsRequest,
   type Run,
   newId,
   nowIso,
 } from '@agentproof/shared';
+import { config } from './config';
 import * as db from './db';
 import { subscribe } from './events';
 import { enqueue } from './jobs';
 import { hoodieMission } from '@agentproof/shared/fixtures';
 import { diagnoseGamma, proposeGammaRepair, applyGammaRepair } from './gamma-demo';
 import { registerRepositoryRoutes } from './repository-routes';
+import {
+  missionReportExists,
+  missionReportRelativePath,
+  readRunReport,
+  readRunReportMarkdown,
+  regenerateMissionReport,
+} from './reports';
+
+const MARKDOWN = 'text/markdown; charset=utf-8';
 
 /**
  * HTTP surface. Contract lives in packages/shared/src/api.ts; keep them in sync.
@@ -30,7 +43,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       ...hoodieMission,
       id: newId('mis'),
       createdAt: nowIso(),
-      storeUrl: `http://localhost:${Number(process.env.STOREFRONT_PORT ?? 5000)}`,
+      storeUrl: config.storeUrl,
     };
     db.saveMission(mission);
     return { mission };
@@ -45,10 +58,26 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     return { mission };
   });
 
+  // One of the storefront's known scenarios (A-E, control), no model call. (W5, Zach)
+  app.post('/missions/fixture', async (req, reply) => {
+    const body = FixtureMissionRequest.safeParse(req.body);
+    if (!body.success) return reply.code(400).send({ error: body.error.message });
+    const mission = scenarioMission(body.data.bug, body.data.storeUrl ?? config.storeUrl);
+    db.saveMission(mission);
+    return { mission };
+  });
+
   app.get<{ Params: { id: string } }>('/missions/:id', async (req, reply) => {
     const mission = db.getMission(req.params.id);
     if (!mission) return reply.code(404).send({ error: 'mission not found' });
-    return { mission, runs: db.listRuns(mission.id) };
+    return {
+      mission,
+      runs: db.listRuns(mission.id),
+      // Artifacts-relative path of the cross-agent report once any run has finished. (W5)
+      ...(missionReportExists(mission.id)
+        ? { missionReportPath: missionReportRelativePath(mission.id) }
+        : {}),
+    };
   });
 
   app.post<{ Params: { id: string } }>('/missions/:id/runs', async (req, reply) => {
@@ -74,6 +103,21 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     return { runs };
   });
 
+  // Cross-agent mission report, rebuilt from the mission's runs on every request. (W5, Zach)
+  app.get<{ Params: { id: string } }>('/missions/:id/report', async (req, reply) => {
+    if (!db.getMission(req.params.id)) return reply.code(404).send({ error: 'mission not found' });
+    const result = await regenerateMissionReport(req.params.id);
+    if (!result) return reply.code(404).send({ error: 'no finished runs for this mission yet' });
+    return { report: result.report };
+  });
+
+  app.get<{ Params: { id: string } }>('/missions/:id/report.md', async (req, reply) => {
+    if (!db.getMission(req.params.id)) return reply.code(404).send({ error: 'mission not found' });
+    const result = await regenerateMissionReport(req.params.id);
+    if (!result) return reply.code(404).send({ error: 'no finished runs for this mission yet' });
+    return reply.type(MARKDOWN).send(fs.readFileSync(result.mdPath, 'utf8'));
+  });
+
   // ---- runs -------------------------------------------------------------------
   app.get('/runs', async () => ({ runs: db.listRuns() }));
 
@@ -81,6 +125,23 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     const run = db.getRun(req.params.id);
     if (!run) return reply.code(404).send({ error: 'run not found' });
     return { run, issues: db.listIssues(run.id), repairs: db.listRepairsForRun(run.id) };
+  });
+
+  // The agent's report, written by jobs.ts once the run has a verdict. (W5, Zach)
+  app.get<{ Params: { id: string } }>('/runs/:id/report', async (req, reply) => {
+    const run = db.getRun(req.params.id);
+    if (!run) return reply.code(404).send({ error: 'run not found' });
+    const report = readRunReport(run);
+    if (!report) return reply.code(404).send({ error: 'report not ready' });
+    return { report };
+  });
+
+  app.get<{ Params: { id: string } }>('/runs/:id/report.md', async (req, reply) => {
+    const run = db.getRun(req.params.id);
+    if (!run) return reply.code(404).send({ error: 'run not found' });
+    const markdown = readRunReportMarkdown(run);
+    if (markdown === undefined) return reply.code(404).send({ error: 'report not ready' });
+    return reply.type(MARKDOWN).send(markdown);
   });
 
   /** Server-Sent Events: one JSON RunEvent per message until the run finishes. */
@@ -209,5 +270,16 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     } catch (error) {
       return reply.code(409).send({ error: String(error) });
     }
+  });
+
+  // ---- artifacts (W5, Zach) ---------------------------------------------------
+  // Screenshots, aria snapshots, traces and both report kinds, by their artifacts-relative path:
+  // GET /artifacts/<runId>/step-001.png, GET /artifacts/missions/<missionId>/report.md.
+  fs.mkdirSync(config.artifactsDir, { recursive: true }); // the plugin requires an existing root
+  await app.register(fastifyStatic, {
+    root: config.artifactsDir,
+    prefix: '/artifacts/',
+    decorateReply: false,
+    index: false,
   });
 }

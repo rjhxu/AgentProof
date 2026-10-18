@@ -8,15 +8,18 @@ import {
 import { alphaFailedRun } from '@agentproof/shared/fixtures';
 import {
   ACTION_SCHEMA_NAME,
+  BETA_SELECT_REJECTION,
   actionDraftJsonSchema,
   summarizeAction,
   summarizeStep,
   toAgentAction,
 } from './actions';
+import { toStrictJsonSchema } from './llm';
 
 const ALPHA: AgentKind = 'alpha_semantic';
 const BETA: AgentKind = 'beta_vision';
 const SIGMA: AgentKind = 'sigma_hybrid';
+const GAMMA: AgentKind = 'gamma_structured';
 const VIEWPORT = { width: 1280, height: 800 };
 
 /** A complete draft with every optional field null, overridden per test. */
@@ -106,6 +109,16 @@ describe('actionDraftJsonSchema', () => {
 
   it('describes each field for the model', () => {
     for (const field of Object.keys(props)) expect(typeof props[field]?.description).toBe('string');
+    expect(props.value?.description).toContain('case-sensitive');
+  });
+
+  it("is llm.ts's strict schema plus the descriptions, nothing else", () => {
+    const undescribed = Object.fromEntries(
+      Object.entries(props).map(([k, { description: _d, ...rest }]) => [k, rest]),
+    );
+    expect({ ...schema, properties: undescribed }).toEqual(
+      toStrictJsonSchema(AgentActionDraft, ACTION_SCHEMA_NAME).schema,
+    );
   });
 
   it('is a fresh object each call', () => {
@@ -128,8 +141,35 @@ describe('toAgentAction: schema validation', () => {
     expect(action).toEqual({ type: 'scroll', direction: 'down', reason: 'look' });
   });
 
+  it('treats empty-string optional fields as null', () => {
+    const action = expectOk(
+      draft({ type: 'click', target: 'button:Add to cart', url: '', text: ' ', value: '' }),
+      ALPHA,
+    );
+    expect(action).toEqual({ type: 'click', target: 'button:Add to cart', reason: 'because' });
+    expect(expectFail(draft({ type: 'click', target: '' }), ALPHA)).toContain(
+      'click needs "target"',
+    );
+    expect(expectFail(draft({ type: 'scroll', direction: '' }), ALPHA)).toContain(
+      'scroll needs "direction"',
+    );
+  });
+
   it('rejects a missing reason', () => {
     expect(expectFail({ type: 'scroll', direction: 'down' }, ALPHA)).toContain('reason');
+  });
+
+  it('rejects browser actions for Gamma, which has no browser', () => {
+    for (const d of [
+      draft({ type: 'click', target: 'button:Add to cart' }),
+      draft({ type: 'type', target: 'spinbutton:Quantity', text: '2' }),
+      draft({ type: 'select', target: 'Size', value: 'M' }),
+    ]) {
+      expect(expectFail(d, GAMMA)).toBe(
+        'agent gamma_structured does not take browser actions (it has no browser)',
+      );
+    }
+    expect(expectOk(draft({ type: 'done', reason: 'inspected' }), GAMMA).type).toBe('done');
   });
 });
 
@@ -186,15 +226,35 @@ describe('toAgentAction: click', () => {
 
   it('rejects the wrong grammar for the kind, naming the right one', () => {
     const alpha = expectFail(draft({ type: 'click', target: '412,388' }), ALPHA);
-    expect(alpha).toContain('click target');
+    expect(alpha).toContain('click target "412,388" is x,y coordinates');
     expect(alpha).toContain('role:name');
     const beta = expectFail(draft({ type: 'click', target: 'button:Add to cart' }), BETA);
+    expect(beta).toContain('click target "button:Add to cart" is role:name');
     expect(beta).toContain('x,y');
     expect(expectFail(draft({ type: 'click', target: '2000,100' }), BETA)).toContain('outside');
-    expect(expectFail(draft({ type: 'click', target: 'text:M' }), ALPHA)).toContain('unknown role');
-    expect(expectFail(draft({ type: 'click', target: '.chip' }), ALPHA)).toContain(
-      'is not role:name',
+    expect(expectFail(draft({ type: 'click', target: 'text:M' }), ALPHA)).toContain(
+      'click target "text:M" has an unknown role "text"',
     );
+    expect(expectFail(draft({ type: 'click', target: '.chip' }), ALPHA)).toContain(
+      'click target ".chip" is not role:name',
+    );
+  });
+
+  it('never doubles the word "target" in a reason the model will read', () => {
+    const drafts = [
+      draft({ type: 'click', target: 'M' }),
+      draft({ type: 'click', target: '412,388' }),
+      draft({ type: 'click', target: 'radio:' }),
+      draft({ type: 'type', target: '.chip', text: 'x' }),
+      draft({ type: 'select', target: 'text:Size', value: 'M' }),
+      draft({ type: 'select', target: '412,388', value: 'M' }),
+    ];
+    for (const d of drafts) {
+      for (const kind of [ALPHA, BETA, SIGMA]) {
+        const res = toAgentAction(d, kind, VIEWPORT);
+        if (!res.ok) expect(res.reason).not.toMatch(/target target/);
+      }
+    }
   });
 });
 
@@ -238,27 +298,32 @@ describe('toAgentAction: select', () => {
     );
   });
 
-  it('accepts x,y for Beta but not a label (Beta has no accessibility tree)', () => {
-    expect(targetOf(expectOk(draft({ type: 'select', target: '412,388', value: 'M' }), BETA))).toBe(
-      '412,388',
+  it('rejects every select for Beta: it picks options by clicking them', () => {
+    for (const target of ['412,388', 'Size', 'combobox:Size']) {
+      expect(expectFail(draft({ type: 'select', target, value: 'M' }), BETA)).toBe(
+        BETA_SELECT_REJECTION,
+      );
+    }
+    expect(BETA_SELECT_REJECTION).toBe(
+      "this agent picks options by clicking them: use click with the option's x,y",
     );
-    const reason = expectFail(draft({ type: 'select', target: 'Size', value: 'M' }), BETA);
-    expect(reason).toContain('label');
-    expect(reason).toContain('x,y');
   });
 
   it('rejects a missing target or value, and invalid targets', () => {
     expect(expectFail(draft({ type: 'select', value: 'M' }), ALPHA)).toContain(
       'select needs "target"',
     );
-    expect(expectFail(draft({ type: 'select', target: 'Size' }), ALPHA)).toContain(
-      'select needs "value"',
-    );
+    const noValue = expectFail(draft({ type: 'select', target: 'Size' }), ALPHA);
+    expect(noValue).toContain('select needs "value"');
+    expect(noValue).toContain('case-sensitive');
     expect(expectFail(draft({ type: 'select', target: 'text:Size', value: 'M' }), ALPHA)).toContain(
-      'select target unknown role',
+      'select target "text:Size" has an unknown role "text"',
     );
+    const xy = expectFail(draft({ type: 'select', target: '412,388', value: 'M' }), SIGMA);
+    expect(xy).toContain('select target "412,388" is x,y coordinates');
+    expect(xy).toContain('click the option by x,y');
     expect(expectFail(draft({ type: 'select', target: '412,388', value: 'M' }), ALPHA)).toContain(
-      'select target',
+      'select target "412,388"',
     );
   });
 });

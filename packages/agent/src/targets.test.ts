@@ -158,6 +158,24 @@ describe('parseTarget: role:name (Alpha)', () => {
     expect(reason).toContain('cannot use');
     expect(reason).toContain('role:name');
   });
+
+  it('starts every reason for a non-empty target with the quoted target, never "target"', () => {
+    const cases: Array<[string, AgentKind]> = [
+      ['M', ALPHA],
+      ['412,388', ALPHA],
+      ['text:M', ALPHA],
+      ['radio:', ALPHA],
+      ['button:Add to cart', BETA],
+      ['-1,5', BETA],
+      ['2000,100', BETA],
+      ['.chip', SIGMA],
+    ];
+    for (const [target, kind] of cases) {
+      const reason = invalidReason(target, kind, VIEWPORT);
+      expect(reason.startsWith(`"${target}"`), reason).toBe(true);
+      expect(reason).not.toMatch(/^target\b/);
+    }
+  });
 });
 
 describe('parseTarget: x,y (Beta)', () => {
@@ -367,6 +385,12 @@ describe('setQuantity', () => {
     await expect(setQuantity(page, 3)).rejects.toThrow(
       'no spinbutton "Quantity" or button "Increase quantity" in the accessibility tree',
     );
+  });
+
+  it('is a no-op for quantity 1 when neither control exists (the default stands)', async () => {
+    const { page, getByRole } = fakePage({});
+    await expect(setQuantity(page, 1)).resolves.toBe('increase');
+    for (const call of getByRole.mock.calls) expect(['spinbutton', 'button']).toContain(call[0]);
   });
 
   it('rejects a non-positive or fractional quantity', async () => {

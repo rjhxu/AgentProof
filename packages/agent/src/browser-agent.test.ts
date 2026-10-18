@@ -1,0 +1,793 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import type { Page } from 'playwright';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
+import type {
+  AgentConfig,
+  AgentKind,
+  Evidence,
+  LlmUsage,
+  Mission,
+  RunStep,
+} from '@agentproof/shared';
+import { hoodieMission } from '@agentproof/shared/fixtures';
+import {
+  STUCK_STEP_LIMIT,
+  observe,
+  runBrowserAgent,
+  type AgentCallbacks,
+  type BrowserAgentDeps,
+  type BrowserSession,
+} from './browser-agent';
+import { LlmError, createMockLlm, type MockLlmScriptEntry } from './llm';
+import type { LlmContentBlock, LlmRequest } from './llm-types';
+import { systemPromptFor } from './prompts';
+
+/**
+ * No browser, no network, no API key: a scripted FakePage that behaves like the storefront
+ * (role controls navigate between four pages; Bug A has no size control) drives the real loop
+ * through deps.openSession, and createMockLlm() plays the model.
+ */
+
+const STORE = 'http://localhost:5000';
+const VIEWPORT = { width: 1280, height: 800 };
+const PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+  'base64',
+);
+const RUN_ID = 'run_test0001';
+
+// Trees as the storefront grader prints them (docs/storefront/bugs-and-fixes.md, Bug A).
+const TREES: Record<string, string> = {
+  '/': [
+    '- main:',
+    '  - heading "All products" [level=1]',
+    '  - link "Black Hoodie":',
+    '    - /url: /products/black-hoodie',
+    '  - link "Canvas Tote"',
+  ].join('\n'),
+  '/products/black-hoodie': [
+    '- main:',
+    '  - heading "Black Hoodie" [level=1]',
+    '  - paragraph: $49.00',
+    '  - text: Size S M L Color Black Quantity',
+    '  - spinbutton "Quantity": "1"',
+    '  - button "Add to cart"',
+  ].join('\n'),
+  '/cart': [
+    '- main:',
+    '  - heading "Your cart" [level=1]',
+    '  - text: Black Hoodie Size: S',
+    '  - link "Proceed to checkout"',
+  ].join('\n'),
+  '/checkout': [
+    '- main:',
+    '  - heading "Review your order" [level=1]',
+    '  - button "Place order"',
+  ].join('\n'),
+};
+const TITLES: Record<string, string> = {
+  '/': 'Northwind Threads',
+  '/products/black-hoodie': 'Black Hoodie - Northwind Threads',
+  '/cart': 'Your cart - Northwind Threads',
+  '/checkout': 'Checkout - Northwind Threads',
+};
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyArgs = any[];
+type AsyncMock = Mock<(...args: AnyArgs) => Promise<unknown>>;
+const asyncFn = (impl?: (...args: AnyArgs) => unknown): AsyncMock =>
+  vi.fn(async (...args: AnyArgs) => impl?.(...args));
+
+// --- fake DOM for the coordinate policy gate (document.elementFromPoint) --------------------
+
+interface FakeDomElement {
+  tagName: string;
+  textContent: string;
+  value?: string;
+  parent?: FakeDomElement;
+  attrs: Record<string, string>;
+  getAttribute(name: string): string | null;
+  closest(selector: string): FakeDomElement | null;
+}
+
+function domElement(spec: {
+  tag: string;
+  text: string;
+  role?: string;
+  ariaLabel?: string;
+  value?: string;
+  parent?: FakeDomElement;
+}): FakeDomElement {
+  const attrs: Record<string, string> = {};
+  if (spec.role) attrs.role = spec.role;
+  if (spec.ariaLabel) attrs['aria-label'] = spec.ariaLabel;
+  const el: FakeDomElement = {
+    tagName: spec.tag.toUpperCase(),
+    textContent: spec.text,
+    ...(spec.value === undefined ? {} : { value: spec.value }),
+    ...(spec.parent === undefined ? {} : { parent: spec.parent }),
+    attrs,
+    getAttribute: (name) => attrs[name] ?? null,
+    closest(selector) {
+      const simple = selector.split(',').map((s) => s.trim());
+      let cur: FakeDomElement | undefined = el;
+      while (cur) {
+        const c: FakeDomElement = cur;
+        const tag = c.tagName.toLowerCase();
+        if (simple.some((s) => s === tag || (s === '[role]' && 'role' in c.attrs))) return c;
+        cur = c.parent;
+      }
+      return null;
+    },
+  };
+  return el;
+}
+
+// --- fake Playwright --------------------------------------------------------------------------
+
+interface FakeLocator {
+  count: () => Promise<number>;
+  first: () => FakeLocator;
+  click: AsyncMock;
+  fill: AsyncMock;
+  check: AsyncMock;
+  selectOption: AsyncMock;
+}
+
+/** A control that is in the tree; acting on it runs `onAct` (e.g. a navigation). */
+function presentLocator(onAct?: () => void): FakeLocator {
+  const locator: FakeLocator = {
+    count: async () => 1,
+    first: () => locator,
+    click: asyncFn(onAct),
+    fill: asyncFn(onAct),
+    check: asyncFn(onAct),
+    selectOption: asyncFn(onAct),
+  };
+  return locator;
+}
+
+/** A control that is not in the tree: count 0, and every action times out like Playwright. */
+function missingLocator(role: string, name: string): FakeLocator {
+  const timeout = (method: string) => () => {
+    throw new Error(
+      `locator.${method}: Timeout 5000ms exceeded.\nCall log:\n  - waiting for getByRole('${role}', { name: '${name}', exact: true })`,
+    );
+  };
+  const locator: FakeLocator = {
+    count: async () => 0,
+    first: () => locator,
+    click: asyncFn(timeout('click')),
+    fill: asyncFn(timeout('fill')),
+    check: asyncFn(timeout('check')),
+    selectOption: asyncFn(timeout('selectOption')),
+  };
+  return locator;
+}
+
+class FakePage {
+  current = `${STORE}/`;
+  /** Role controls by "role:name"; anything else behaves like a Playwright timeout. */
+  readonly controls = new Map<string, FakeLocator>();
+  /** What document.elementFromPoint returns to the coordinate policy gate. */
+  elementAtPoint: (x: number, y: number) => FakeDomElement | null = () => null;
+  /** page.locator('main').count() */
+  mainCount = 1;
+
+  readonly goto = asyncFn((url: string) => {
+    this.current = url;
+  });
+  readonly screenshot = asyncFn(() => PNG);
+  readonly waitForLoadState = asyncFn();
+  readonly waitForTimeout = asyncFn();
+  readonly mouse = { click: asyncFn(), wheel: asyncFn() };
+  readonly keyboard = { type: asyncFn(), press: asyncFn() };
+  readonly mainSnapshot = asyncFn(() => TREES[this.pathname()] ?? '- main:');
+  readonly bodySnapshot = asyncFn(() => `- document:\n${TREES[this.pathname()] ?? ''}`);
+  readonly bodyText = asyncFn(() => `TEXT OF ${this.pathname()}`);
+
+  constructor() {
+    this.controls.set(
+      'link:Black Hoodie',
+      presentLocator(() => this.go('/products/black-hoodie')),
+    );
+    this.controls.set(
+      'button:Add to cart',
+      presentLocator(() => this.go('/cart')),
+    );
+    this.controls.set(
+      'link:Proceed to checkout',
+      presentLocator(() => this.go('/checkout')),
+    );
+  }
+
+  pathname(): string {
+    return new URL(this.current).pathname;
+  }
+  go(pathname: string): void {
+    this.current = `${STORE}${pathname}`;
+  }
+  url(): string {
+    return this.current;
+  }
+  async title(): Promise<string> {
+    return TITLES[this.pathname()] ?? 'Northwind Threads';
+  }
+  locator(selector: string) {
+    if (selector === 'main')
+      return { count: async () => this.mainCount, ariaSnapshot: this.mainSnapshot };
+    if (selector === 'body') return { ariaSnapshot: this.bodySnapshot, innerText: this.bodyText };
+    throw new Error(`FakePage: unexpected selector ${selector}`);
+  }
+  getByRole(role: string, options: { name: string; exact: boolean }): FakeLocator {
+    return this.controls.get(`${role}:${options.name}`) ?? missingLocator(role, options.name);
+  }
+  /** Runs the page function in-process against a fake `document`. */
+  async evaluate(fn: (arg: unknown) => unknown, arg: unknown): Promise<unknown> {
+    const g = globalThis as { document?: unknown };
+    g.document = { elementFromPoint: (x: number, y: number) => this.elementAtPoint(x, y) };
+    try {
+      return fn(arg);
+    } finally {
+      delete g.document;
+    }
+  }
+  asPage(): Page {
+    return this as unknown as Page;
+  }
+}
+
+const COOKIE = {
+  name: 'nw_session',
+  value: 'abc123',
+  domain: 'localhost',
+  path: '/',
+  expires: -1,
+  httpOnly: true,
+  secure: false,
+  sameSite: 'Lax',
+};
+
+function fakeSession(page: FakePage) {
+  const tracing = {
+    start: asyncFn(),
+    stop: asyncFn((opts: { path: string }) => fs.writeFileSync(opts.path, 'trace')),
+  };
+  const context = { cookies: asyncFn(() => [COOKIE]), tracing };
+  const browser = { close: asyncFn() };
+  const session = { browser, context, page } as unknown as BrowserSession;
+  return { session, browser, context, tracing };
+}
+
+// --- harness ----------------------------------------------------------------------------------
+
+let root: string;
+let artifactDir: string;
+
+beforeEach(() => {
+  root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentproof-browser-agent-'));
+  artifactDir = path.join(root, RUN_ID);
+  vi.stubEnv('AGENTPROOF_ALLOWED_HOSTS', 'localhost,127.0.0.1');
+  vi.stubEnv('AGENTPROOF_MAX_STEPS', '');
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+function clock(): () => number {
+  let t = 1_760_000_000_000;
+  return () => (t += 50);
+}
+
+interface RunOptions {
+  page?: FakePage;
+  config?: Partial<AgentConfig>;
+  mission?: Mission;
+  deps?: Partial<BrowserAgentDeps>;
+}
+
+async function run(kind: AgentKind, script: MockLlmScriptEntry[], options: RunOptions = {}) {
+  const page = options.page ?? new FakePage();
+  const fake = fakeSession(page);
+  const openSession = vi.fn(async (_config: AgentConfig) => fake.session);
+  const steps: RunStep[] = [];
+  const evidence: Evidence[] = [];
+  const logs: string[] = [];
+  const events: string[] = [];
+  const cb: AgentCallbacks = {
+    onStep: (step) => {
+      steps.push(step);
+      events.push(`step:${step.index}`);
+    },
+    onEvidence: (e) => {
+      evidence.push(e);
+      events.push(`evidence:${e.kind}:${e.stepIndex ?? '-'}`);
+    },
+    onLog: (message) => logs.push(message),
+  };
+  const llm = createMockLlm(script);
+  const config: AgentConfig = {
+    kind,
+    model: 'grok-test',
+    viewport: VIEWPORT,
+    headed: false,
+    ...options.config,
+  };
+  const result = await runBrowserAgent(options.mission ?? hoodieMission, config, artifactDir, cb, {
+    llm,
+    openSession,
+    now: clock(),
+    ...options.deps,
+  });
+  return { result, page, llm, openSession, steps, evidence, logs, events, ...fake };
+}
+
+// --- scripted model replies -------------------------------------------------------------------
+
+const usageOf = (inputTokens: number): LlmUsage => ({
+  calls: 1,
+  inputTokens,
+  outputTokens: 7,
+  reasoningTokens: 0,
+  cachedInputTokens: 0,
+  imageInputs: 0,
+  llmLatencyMs: 5,
+});
+
+function reply(draft: Record<string, unknown>, inputTokens?: number): MockLlmScriptEntry {
+  const json = {
+    reason: 'test',
+    target: null,
+    url: null,
+    text: null,
+    value: null,
+    direction: null,
+    what: null,
+    ...draft,
+  };
+  return inputTokens === undefined ? { json } : { json, usage: usageOf(inputTokens) };
+}
+const click = (target: string, tokens?: number) => reply({ type: 'click', target }, tokens);
+const select = (target: string, value: string, tokens?: number) =>
+  reply({ type: 'select', target, value }, tokens);
+const navigate = (url: string) => reply({ type: 'navigate', url });
+const typeInto = (target: string, text: string) => reply({ type: 'type', target, text });
+const scrollDown = () => reply({ type: 'scroll', direction: 'down' });
+const done = (summary: string, tokens?: number) => reply({ type: 'done', reason: summary }, tokens);
+
+const texts = (req: LlmRequest): string =>
+  (req.messages[0]?.content ?? [])
+    .flatMap((b: LlmContentBlock) => (b.type === 'text' ? [b.text] : []))
+    .join('\n');
+const images = (req: LlmRequest) =>
+  (req.messages[0]?.content ?? []).filter((b) => b.type === 'image');
+
+// --- tests ------------------------------------------------------------------------------------
+
+describe('runBrowserAgent: Alpha on Bug A', () => {
+  it('runs observe -> decide -> police -> act -> record and returns the claim with its evidence', async () => {
+    const r = await run('alpha_semantic', [
+      click('link:Black Hoodie', 100),
+      select('Size', 'M', 100),
+      click('button:Add to cart', 100),
+      click('link:Proceed to checkout', 100),
+      done('Reached checkout review; size S in the cart (no size control existed)', 100),
+    ]);
+
+    expect(r.result.outcome).toBe('done');
+    expect(r.result.summary).toContain('Reached checkout review');
+    expect(r.result.finalUrl).toBe(`${STORE}/checkout`);
+    expect(r.result.visitedUrls).toEqual([
+      STORE,
+      `${STORE}/products/black-hoodie`,
+      `${STORE}/cart`,
+      `${STORE}/checkout`,
+    ]);
+    expect(r.result.cookies).toEqual([
+      { name: 'nw_session', value: 'abc123', domain: 'localhost', path: '/' },
+    ]);
+    expect(r.result.resolvedModel).toBe('grok-test');
+    expect(r.result.provider).toBe('mock');
+    expect(r.result.effort).toBe('low');
+    expect(r.result.stepsUsed).toBe(5);
+    expect(r.result.durationMs).toBeGreaterThan(0);
+
+    // Steps, in order, with the Bug A failure recorded as an error, not a crash.
+    expect(r.steps.map((s) => s.outcome)).toEqual(['ok', 'error', 'ok', 'ok', 'ok']);
+    expect(r.steps.map((s) => s.index)).toEqual([0, 1, 2, 3, 4]);
+    expect(r.steps[0]?.url).toBe(STORE);
+    expect(r.steps[0]?.action).toEqual({
+      type: 'click',
+      target: 'link:Black Hoodie',
+      reason: 'test',
+    });
+    expect(r.steps[1]?.url).toBe(`${STORE}/products/black-hoodie`);
+    expect(r.steps[1]?.outcomeDetail).toBe(
+      'no radio "M", combobox "Size", or button "M" in the accessibility tree',
+    );
+    expect(r.steps[4]?.action).toEqual({
+      type: 'done',
+      summary: 'Reached checkout review; size S in the cart (no size control existed)',
+    });
+    for (const step of r.steps) {
+      expect(step.usage?.inputTokens).toBe(100);
+      expect(step.durationMs).toBeGreaterThan(0);
+      expect(Date.parse(step.at)).not.toBeNaN();
+    }
+
+    // Usage is summed over every model call.
+    expect(r.result.usage.calls).toBe(5);
+    expect(r.result.usage.inputTokens).toBe(500);
+    expect(r.result.usage.outputTokens).toBe(35);
+    expect(r.result.usage.llmLatencyMs).toBe(25);
+
+    // Evidence: a screenshot and an aria snapshot per step, emitted before the step, as files
+    // under <artifactsRoot>/<runId> with paths relative to <artifactsRoot>.
+    const byId = new Map(r.evidence.map((e) => [e.id, e]));
+    for (const step of r.steps) {
+      const nnn = String(step.index).padStart(3, '0');
+      const shot = byId.get(step.screenshotEvidenceId ?? '');
+      expect(shot?.kind).toBe('screenshot');
+      expect(shot?.stepIndex).toBe(step.index);
+      expect(shot?.runId).toBe(RUN_ID);
+      expect(shot?.path).toBe(`${RUN_ID}/step-${nnn}.png`);
+      expect(fs.readFileSync(path.join(root, shot?.path ?? ''))).toEqual(PNG);
+      const tree = byId.get(step.snapshotEvidenceId ?? '');
+      expect(tree?.kind).toBe('dom_snapshot');
+      expect(tree?.path).toBe(`${RUN_ID}/step-${nnn}.aria.txt`);
+      expect(fs.existsSync(path.join(root, tree?.path ?? ''))).toBe(true);
+    }
+    expect(fs.readFileSync(path.join(root, RUN_ID, 'step-001.aria.txt'), 'utf8')).toContain(
+      'text: Size S M L',
+    );
+    expect(r.events.slice(0, 6)).toEqual([
+      'evidence:screenshot:0',
+      'evidence:dom_snapshot:0',
+      'step:0',
+      'evidence:screenshot:1',
+      'evidence:dom_snapshot:1',
+      'step:1',
+    ]);
+
+    // Trace saved on close and reported.
+    const trace = r.evidence.find((e) => e.kind === 'trace');
+    expect(trace?.path).toBe(`${RUN_ID}/trace.zip`);
+    expect(r.result.tracePath).toBe(`${RUN_ID}/trace.zip`);
+    expect(fs.existsSync(path.join(root, RUN_ID, 'trace.zip'))).toBe(true);
+    expect(r.tracing.stop).toHaveBeenCalledWith({ path: path.join(artifactDir, 'trace.zip') });
+    expect(r.browser.close).toHaveBeenCalledTimes(1);
+    expect(r.openSession).toHaveBeenCalledTimes(1);
+
+    // Log lines: the model header, then one per step.
+    expect(r.logs[0]).toBe('model: grok-test (mock, effort low)');
+    expect(r.logs[1]).toBe('#0 click link:Black Hoodie -> ok');
+    expect(r.logs[2]).toBe(
+      '#1 select Size = M -> error: no radio "M", combobox "Size", or button "M" in the accessibility tree',
+    );
+
+    // The model saw the tree (never an image), and the failed select in its history next turn.
+    expect(r.llm.requests).toHaveLength(5);
+    const product = r.llm.requests[1]!;
+    expect(product.model).toBe('grok-test');
+    expect(product.effort).toBe('low');
+    expect(product.jsonSchema?.name).toBe('agent_action');
+    expect(product.maxTokens).toBe(2048);
+    expect(product.timeoutMs).toBe(120_000);
+    expect(images(product)).toHaveLength(0);
+    expect(texts(product)).toContain('ACCESSIBILITY TREE');
+    expect(texts(product)).toContain('text: Size S M L');
+    expect(texts(product)).toContain('PAGE TEXT');
+    expect(texts(product)).toContain('STEPS REMAINING: 19'); // alpha profile cap 20, one step used
+    expect(product.system).toBe(systemPromptFor('alpha_semantic')); // fixed, no page content
+    expect(product.system).not.toContain('Northwind');
+    expect(product.system).not.toContain('localhost');
+    expect(texts(r.llm.requests[2]!)).toContain(
+      '#1 select Size = M -> error: no radio "M", combobox "Size", or button "M"',
+    );
+  });
+
+  it('fails as stuck after three consecutive error steps', async () => {
+    const r = await run('alpha_semantic', [select('Size', 'M')]);
+    expect(r.steps.map((s) => s.outcome)).toEqual(['error', 'error', 'error']);
+    expect(r.result.outcome).toBe('fail');
+    expect(r.result.summary).toBe(
+      'stuck: no radio "M", combobox "Size", or button "M" in the accessibility tree',
+    );
+    expect(r.result.stepsUsed).toBe(STUCK_STEP_LIMIT);
+    expect(r.llm.requests).toHaveLength(3);
+    expect(r.browser.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('records a policy rejection without executing it and lets the run continue', async () => {
+    const r = await run('alpha_semantic', [navigate('http://evil.example.com/'), done('gave up')]);
+    expect(r.steps[0]?.outcome).toBe('rejected_by_policy');
+    expect(r.steps[0]?.outcomeDetail).toContain('not in AGENTPROOF_ALLOWED_HOSTS');
+    expect(r.steps[0]?.action).toMatchObject({ type: 'navigate', url: 'http://evil.example.com/' });
+    expect(r.page.goto).toHaveBeenCalledTimes(1); // only the initial store navigation
+    expect(r.page.goto).toHaveBeenCalledWith(
+      STORE,
+      expect.objectContaining({ waitUntil: 'domcontentloaded' }),
+    );
+    expect(r.result.outcome).toBe('done');
+    expect(texts(r.llm.requests[1]!)).toContain('rejected_by_policy');
+  });
+
+  it('records unusable model output as invalid_action and shows the reason next turn', async () => {
+    const r = await run('alpha_semantic', [
+      { text: 'I would click the hoodie link.' }, // not JSON
+      { json: { type: 'click' } }, // JSON, but not the schema (no reason)
+      done('ok'),
+    ]);
+    expect(r.steps.map((s) => s.outcome)).toEqual(['invalid_action', 'invalid_action', 'ok']);
+    expect(r.steps[0]?.outcomeDetail).toBe('model returned no JSON');
+    expect(r.steps[0]?.action).toBeUndefined();
+    expect(r.steps[1]?.outcomeDetail).toContain('does not match the schema');
+    expect(texts(r.llm.requests[1]!)).toContain(
+      '#0 (no action) -> invalid_action: model returned no JSON',
+    );
+    expect(r.result.outcome).toBe('done');
+  });
+
+  it('records an act error as the first line of the message, capped', async () => {
+    const r = await run('alpha_semantic', [click('button:Does not exist'), done('ok')]);
+    expect(r.steps[0]?.outcome).toBe('error');
+    expect(r.steps[0]?.outcomeDetail).toBe('locator.click: Timeout 5000ms exceeded.');
+    expect(r.result.outcome).toBe('done');
+  });
+
+  it('stops at the step limit (config cap and mission cap)', async () => {
+    const r = await run('alpha_semantic', [scrollDown()], { config: { maxSteps: 2 } });
+    expect(r.steps.map((s) => s.outcome)).toEqual(['ok', 'ok']);
+    expect(r.result.outcome).toBe('step_limit');
+    expect(r.result.summary).toBe('step limit reached');
+    expect(r.page.mouse.wheel).toHaveBeenCalledTimes(2);
+    expect(r.page.mouse.wheel).toHaveBeenCalledWith(0, 600);
+    expect(texts(r.llm.requests[0]!)).toContain('STEPS REMAINING: 2');
+    expect(texts(r.llm.requests[1]!)).toContain('STEPS REMAINING: 1');
+
+    const capped = await run('alpha_semantic', [scrollDown()], {
+      mission: { ...hoodieMission, maxSteps: 1 },
+    });
+    expect(capped.result.outcome).toBe('step_limit');
+    expect(capped.steps).toHaveLength(1);
+    expect(capped.steps[0]?.outcome).toBe('ok');
+  });
+
+  it('routes select through setQuantity for a quantity group and chooseOption otherwise', async () => {
+    const page = new FakePage();
+    const quantity = presentLocator();
+    const size = presentLocator();
+    page.controls.set('spinbutton:Quantity', quantity);
+    page.controls.set('combobox:Size', size);
+    const r = await run(
+      'alpha_semantic',
+      [select('Quantity', '3'), select('combobox:Size', 'M'), done('ok')],
+      { page },
+    );
+    expect(r.steps.map((s) => s.outcome)).toEqual(['ok', 'ok', 'ok']);
+    expect(quantity.fill).toHaveBeenCalledWith('3', { timeout: 2000 });
+    expect(size.selectOption).toHaveBeenCalledWith({ label: 'M' }, { timeout: 2000 });
+    expect(page.waitForLoadState).toHaveBeenCalledWith('domcontentloaded');
+    expect(page.waitForTimeout).toHaveBeenCalledWith(250);
+  });
+});
+
+describe('runBrowserAgent: Beta', () => {
+  it('sends the screenshot and no tree, and clicks and types by coordinate', async () => {
+    const page = new FakePage();
+    page.elementAtPoint = () => domElement({ tag: 'div', text: 'M' });
+    const r = await run('beta_vision', [click('412,388'), typeInto('300,500', '3'), done('ok')], {
+      page,
+    });
+
+    const first = r.llm.requests[0]!;
+    const imageBlocks = images(first);
+    expect(imageBlocks).toHaveLength(1);
+    expect(imageBlocks[0]).toEqual({
+      type: 'image',
+      mediaType: 'image/png',
+      base64: PNG.toString('base64'),
+    });
+    expect(texts(first)).toContain('SCREENSHOT above: 1280x800 pixels');
+    expect(texts(first)).not.toContain('ACCESSIBILITY TREE');
+    expect(texts(first)).not.toContain('PAGE TEXT');
+    expect(first.effort).toBe('medium');
+
+    expect(r.steps.map((s) => s.outcome)).toEqual(['ok', 'ok', 'ok']);
+    expect(r.result.effort).toBe('medium');
+    expect(r.result.usage.imageInputs).toBe(3);
+    // The screenshot file is still evidence for humans; no tree was captured.
+    expect(r.steps[0]?.screenshotEvidenceId).toBeDefined();
+    expect(r.steps[0]?.snapshotEvidenceId).toBeUndefined();
+    expect(fs.existsSync(path.join(root, RUN_ID, 'step-000.png'))).toBe(true);
+    expect(fs.existsSync(path.join(root, RUN_ID, 'step-000.aria.txt'))).toBe(false);
+  });
+
+  it('clicks and types through the mouse and keyboard', async () => {
+    const page = new FakePage();
+    page.elementAtPoint = () => domElement({ tag: 'div', text: 'M' });
+    const getByRole = vi.spyOn(page, 'getByRole');
+    const r = await run('beta_vision', [click('412,388'), typeInto('300,500', '3'), done('ok')], {
+      page,
+    });
+    expect(r.steps.map((s) => s.outcome)).toEqual(['ok', 'ok', 'ok']);
+    expect(page.mouse.click).toHaveBeenNthCalledWith(1, 412, 388);
+    expect(page.mouse.click).toHaveBeenNthCalledWith(2, 300, 500);
+    expect(page.keyboard.press).toHaveBeenCalledWith('ControlOrMeta+a');
+    expect(page.keyboard.type).toHaveBeenCalledWith('3');
+    expect(getByRole).not.toHaveBeenCalled(); // a vision agent never resolves roles
+  });
+
+  it('refuses a coordinate click that would land on a payment control', async () => {
+    const page = new FakePage();
+    const button = domElement({ tag: 'button', text: ' Place order ' });
+    page.elementAtPoint = () => domElement({ tag: 'span', text: 'Place order', parent: button });
+    const r = await run('beta_vision', [click('640,700'), done('ok')], { page });
+    expect(r.steps[0]?.outcome).toBe('rejected_by_policy');
+    expect(r.steps[0]?.outcomeDetail).toBe(
+      'coordinate click would hit a payment control: "Place order"',
+    );
+    expect(page.mouse.click).not.toHaveBeenCalled();
+    expect(r.result.outcome).toBe('done');
+  });
+
+  it('reads the control under the point, not a role-bearing container around plain text', async () => {
+    const page = new FakePage();
+    const region = domElement({
+      tag: 'section',
+      role: 'region',
+      text: 'Ships in 3 days Place order',
+    });
+    page.elementAtPoint = () => domElement({ tag: 'p', text: 'Ships in 3 days', parent: region });
+    const allowed = await run('beta_vision', [click('100,100'), done('ok')], { page });
+    expect(allowed.steps[0]?.outcome).toBe('ok');
+    expect(page.mouse.click).toHaveBeenCalledWith(100, 100);
+
+    const labelled = new FakePage();
+    labelled.elementAtPoint = () =>
+      domElement({ tag: 'input', text: '', value: 'Pay now', parent: region });
+    const rejected = await run('beta_vision', [click('100,100'), done('ok')], { page: labelled });
+    expect(rejected.steps[0]?.outcome).toBe('rejected_by_policy');
+    expect(rejected.steps[0]?.outcomeDetail).toContain('"Pay now"');
+  });
+
+  it('rejects select for a vision agent as an invalid action', async () => {
+    const r = await run('beta_vision', [select('Size', 'M'), done('ok')]);
+    expect(r.steps[0]?.outcome).toBe('invalid_action');
+    expect(r.steps[0]?.outcomeDetail).toContain('x,y');
+  });
+});
+
+describe('runBrowserAgent: Sigma', () => {
+  it('sends image, tree and text, and uses both target grammars', async () => {
+    const page = new FakePage();
+    page.elementAtPoint = () => domElement({ tag: 'div', text: 'M' });
+    const r = await run(
+      'sigma_hybrid',
+      [click('link:Black Hoodie'), click('412,388'), click('button:Add to cart'), done('ok')],
+      { page },
+    );
+
+    const product = r.llm.requests[1]!;
+    expect(images(product)).toHaveLength(1);
+    expect(texts(product)).toContain('ACCESSIBILITY TREE');
+    expect(texts(product)).toContain('text: Size S M L');
+    expect(texts(product)).toContain('PAGE TEXT');
+    expect(product.effort).toBe('high');
+
+    expect(r.steps.map((s) => s.outcome)).toEqual(['ok', 'ok', 'ok', 'ok']);
+    expect(page.mouse.click).toHaveBeenCalledWith(412, 388);
+    expect(r.result.finalUrl).toBe(`${STORE}/cart`);
+    expect(r.result.effort).toBe('high');
+    expect(r.result.usage.imageInputs).toBe(4);
+    for (const step of r.steps) {
+      expect(step.screenshotEvidenceId).toBeDefined();
+      expect(step.snapshotEvidenceId).toBeDefined();
+    }
+  });
+});
+
+describe('runBrowserAgent: guards and errors', () => {
+  it('refuses to run Gamma', async () => {
+    const r = await run('gamma_structured', [done('ok')]);
+    expect(r.result.outcome).toBe('error');
+    expect(r.result.summary).toBe('gamma is not a browser agent');
+    expect(r.openSession).not.toHaveBeenCalled();
+    expect(r.llm.requests).toHaveLength(0);
+    expect(r.result.stepsUsed).toBe(0);
+  });
+
+  it('refuses a store host outside the allowlist before opening a browser', async () => {
+    const r = await run('alpha_semantic', [done('ok')], {
+      mission: { ...hoodieMission, storeUrl: 'http://evil.example.com' },
+    });
+    expect(r.result.outcome).toBe('error');
+    expect(r.result.summary).toContain('not in AGENTPROOF_ALLOWED_HOSTS');
+    expect(r.openSession).not.toHaveBeenCalled();
+    expect(r.llm.requests).toHaveLength(0);
+  });
+
+  it('turns a model error into outcome error and still closes the browser', async () => {
+    const r = await run('alpha_semantic', [
+      () => {
+        throw new LlmError('xai 500 after 3 retries', {
+          provider: 'xai',
+          status: 500,
+          retryable: true,
+        });
+      },
+    ]);
+    expect(r.result.outcome).toBe('error');
+    expect(r.result.summary).toBe('xai 500 after 3 retries');
+    expect(r.steps).toHaveLength(0);
+    expect(r.browser.close).toHaveBeenCalledTimes(1);
+    expect(r.tracing.stop).toHaveBeenCalledTimes(1);
+    expect(r.result.tracePath).toBe(`${RUN_ID}/trace.zip`);
+    expect(r.result.finalUrl).toBe(STORE);
+    expect(r.result.cookies).toHaveLength(1);
+    expect(r.logs).toContain('error: xai 500 after 3 retries');
+    // The evidence captured before the failing decide() is still there.
+    expect(r.evidence.map((e) => e.kind)).toEqual(['screenshot', 'dom_snapshot', 'trace']);
+  });
+
+  it('turns a browser failure into outcome error', async () => {
+    const page = new FakePage();
+    page.goto.mockImplementationOnce(async () => {
+      throw new Error('page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:5000\nCall log:');
+    });
+    const r = await run('alpha_semantic', [done('ok')], { page });
+    expect(r.result.outcome).toBe('error');
+    expect(r.result.summary).toBe(
+      'page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:5000',
+    );
+    expect(r.browser.close).toHaveBeenCalledTimes(1);
+    expect(r.llm.requests).toHaveLength(0);
+  });
+
+  it('never throws when closing the browser fails', async () => {
+    const fake = fakeSession(new FakePage());
+    fake.browser.close.mockImplementationOnce(async () => {
+      throw new Error('Target closed');
+    });
+    const logs: string[] = [];
+    const result = await runBrowserAgent(
+      hoodieMission,
+      { kind: 'alpha_semantic', model: 'grok-test', viewport: VIEWPORT, headed: false },
+      artifactDir,
+      { onStep: () => {}, onEvidence: () => {}, onLog: (m) => logs.push(m) },
+      { llm: createMockLlm([done('ok')]), openSession: async () => fake.session },
+    );
+    expect(result.outcome).toBe('done');
+    expect(logs).toContain('browser close failed: Target closed');
+  });
+});
+
+describe('observe', () => {
+  it('captures what each kind perceives, falling back to body when main is absent', async () => {
+    const page = new FakePage();
+    page.mainCount = 0;
+    const alpha = await observe(page.asPage(), 'alpha_semantic', VIEWPORT);
+    expect(alpha.url).toBe(`${STORE}/`);
+    expect(alpha.title).toBe('Northwind Threads');
+    expect(alpha.ariaSnapshot?.startsWith('- document:')).toBe(true);
+    expect(alpha.textExcerpt).toBe('TEXT OF /');
+    expect(alpha.screenshotBase64).toBeUndefined();
+    expect(alpha.viewport).toEqual(VIEWPORT);
+    expect(page.screenshot).not.toHaveBeenCalled();
+
+    page.mainCount = 1;
+    const beta = await observe(page.asPage(), 'beta_vision', VIEWPORT);
+    expect(beta.screenshotBase64).toBe(PNG.toString('base64'));
+    expect(beta.ariaSnapshot).toBeUndefined();
+    expect(beta.textExcerpt).toBeUndefined();
+
+    const sigma = await observe(page.asPage(), 'sigma_hybrid', VIEWPORT);
+    expect(sigma.ariaSnapshot?.startsWith('- main:')).toBe(true);
+    expect(sigma.textExcerpt).toBe('TEXT OF /');
+    expect(sigma.screenshotBase64).toBe(PNG.toString('base64'));
+  });
+});

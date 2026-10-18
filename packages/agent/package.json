@@ -14,7 +14,8 @@
     "demo:smoke": "node scripts/demo-smoke.mjs",
     "demo:repository": "node scripts/repository-smoke.mjs",
     "demo:repository:live": "node scripts/repository-live-smoke.mjs",
-    "run": "tsx --env-file-if-exists=../../.env src/cli.ts"
+    "cli": "tsx --env-file-if-exists=../../.env src/cli.ts",
+    "llm:smoke": "tsx --env-file-if-exists=../../.env scripts/llm-smoke.ts"
   },
   "dependencies": {
     "@agentproof/shared": "workspace:*",
