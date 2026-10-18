@@ -18,7 +18,7 @@ import type {
 
 import { buildProblems, orderProblems } from '../design/flow/findings-data';
 import { FindingsStep } from '../design/flow/findings-step';
-import { CHECK_LABELS, type CodeFixPreview } from '../design/flow/fixes-data';
+import { CHECK_LABELS, canOpenPullRequests, type CodeFixPreview } from '../design/flow/fixes-data';
 import { FixesStep } from '../design/flow/fixes-step';
 import { initialFlow, reduceFlow, type FlowStep } from '../design/flow/flow-machine';
 import { SpinnerIcon } from '../design/flow/icons';
@@ -27,6 +27,7 @@ import { Stepper } from '../design/flow/stepper';
 import { StoreStep } from '../design/flow/store-step';
 import { summarize, thesisLine } from '../design/format';
 import { api } from '../lib/api';
+import { shouldAutoOpenPullRequests } from './auto-open';
 import {
   deliveryOf,
   finalAttempt,
@@ -39,6 +40,7 @@ import { ErrorBar } from './error-bar';
 import { isTerminalStatus, originalRuns } from './hydrate';
 import { failedWithCheckpoint, fallbackIssue, pickIssue } from './issues';
 import { normalizeStoreUrl } from './store-url';
+import { useAppRepositories } from './use-app-repositories';
 import { useFixes } from './use-fixes';
 import { useLiveScan } from './use-live-scan';
 
@@ -136,6 +138,9 @@ export function LiveFlow({ missionId }: { missionId?: string }) {
   const appFetched = useRef(false);
 
   const fixes = useFixes();
+  /** The GitHub App path asked to open draft pull requests once the fixes are ready. */
+  const [openAfterRead, setOpenAfterRead] = useState(false);
+  const autoOpened = useRef(false);
 
   // ---- issues: one per failed run, from the saved run, else a diagnosis, else the checkpoint ----
   const ensureIssue = useCallback(async (run: Run, allowDiagnose: boolean) => {
@@ -233,7 +238,7 @@ export function LiveFlow({ missionId }: { missionId?: string }) {
     }
   }, [state, scan.done, report]);
 
-  // The GitHub App decides whether the connect form needs a token.
+  // The GitHub App decides whether connecting starts from an install link or a URL.
   useEffect(() => {
     if (state.step !== 'findings' || appFetched.current) return;
     appFetched.current = true;
@@ -242,6 +247,13 @@ export function LiveFlow({ missionId }: { missionId?: string }) {
       .then(({ app }) => setGithubApp(app))
       .catch(() => undefined);
   }, [state.step]);
+
+  const appRepos = useAppRepositories(
+    state.step === 'findings' &&
+      state.connect !== 'closed' &&
+      githubApp?.configured === true &&
+      githubApp.installUrl !== undefined,
+  );
 
   // The cards appear once every diff fix has finished.
   useEffect(() => {
@@ -380,6 +392,8 @@ export function LiveFlow({ missionId }: { missionId?: string }) {
       setIssues({});
       setRepositories({});
       setConnectError(undefined);
+      setOpenAfterRead(false);
+      autoOpened.current = false;
       diagnosing.current.clear();
       settledAtLoad.current.clear();
       fellBack.current.clear();
@@ -403,6 +417,8 @@ export function LiveFlow({ missionId }: { missionId?: string }) {
     setRepositories({});
     setStoreError(undefined);
     setConnectError(undefined);
+    setOpenAfterRead(false);
+    autoOpened.current = false;
     setPromptVisible(false);
     setPrompt('');
     diagnosing.current.clear();
@@ -486,9 +502,14 @@ export function LiveFlow({ missionId }: { missionId?: string }) {
   };
 
   /** Connect the same repository to every failed run; the request (and its token) is not kept. */
-  const connect = async (request: ConnectRepositoryRequest) => {
+  const connect = async (
+    request: ConnectRepositoryRequest,
+    opts?: { openPullRequests?: boolean },
+  ) => {
     dispatch({ type: 'CONNECT_SUBMITTED' });
     setConnectError(undefined);
+    setOpenAfterRead(false);
+    autoOpened.current = false;
     const targets = runs.filter((r) => failedWithCheckpoint(scan.finalRuns[r.id] ?? r));
     try {
       const entries = await Promise.all(
@@ -512,10 +533,12 @@ export function LiveFlow({ missionId }: { missionId?: string }) {
         throw new Error('The repository could not be connected.');
       }
       setRepositories(connected);
+      setOpenAfterRead(opts?.openPullRequests === true);
       dispatch({ type: 'REPOSITORY_CONNECTED' });
       void fixes.start(targets, connected);
     } catch (err) {
       dispatch({ type: 'CONNECT_FAILED' });
+      setOpenAfterRead(false);
       setConnectError(errorText(err));
     }
   };
@@ -556,6 +579,31 @@ export function LiveFlow({ missionId }: { missionId?: string }) {
     }
     return { list, failed, codefixes };
   }, [problems, fixes.diff, fixes.pr, fixes.prErrors, fixes.startErrors]);
+
+  // The GitHub App path opens the draft pull requests itself, once, when the fixes are ready.
+  useEffect(() => {
+    if (
+      !shouldAutoOpenPullRequests({
+        ready: state.step === 'fixes' && state.phase === 'ready',
+        requested: openAfterRead,
+        fired: autoOpened.current,
+        canOpen: repository !== undefined && canOpenPullRequests(repository),
+        opening: fixes.opening,
+        fixCount: fixesView.list.length,
+      })
+    ) {
+      return;
+    }
+    autoOpened.current = true;
+    void fixes.openPullRequests();
+  }, [
+    state,
+    openAfterRead,
+    repository,
+    fixes.opening,
+    fixes.openPullRequests,
+    fixesView.list.length,
+  ]);
 
   // ---- stepper --------------------------------------------------------------------------------
   // The reading beat counts problems in the order Findings told them, not in fix-arrival order.
@@ -657,9 +705,19 @@ export function LiveFlow({ missionId }: { missionId?: string }) {
                   cards={cards}
                   connect={state.connect}
                   connectError={connectError}
-                  tokenHidden={githubApp?.configured === true && !connectError}
+                  app={
+                    githubApp?.configured === true && githubApp.installUrl
+                      ? {
+                          installUrl: githubApp.installUrl,
+                          repositories: appRepos.repositories,
+                          loading: appRepos.loading,
+                          ...(appRepos.error ? { error: appRepos.error } : {}),
+                          onRefresh: () => void appRepos.refresh(),
+                        }
+                      : undefined
+                  }
                   onOpenConnect={() => dispatch({ type: 'CONNECT_OPENED' })}
-                  onConnect={(request) => void connect(request)}
+                  onConnect={(request, opts) => void connect(request, opts)}
                   onDownload={download}
                   onContinueToFixes={
                     repository && fixes.allDiffDone
@@ -679,6 +737,7 @@ export function LiveFlow({ missionId }: { missionId?: string }) {
                 failed={fixesView.failed}
                 reading={reading}
                 opening={fixes.opening}
+                autoOpen={openAfterRead}
                 onOpen={() => void fixes.openPullRequests()}
               />
             ) : (

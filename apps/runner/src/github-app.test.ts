@@ -22,6 +22,8 @@ const stubs = vi.hoisted(() => ({
   findInstallation: vi.fn(),
   mintInstallationToken: vi.fn(),
   convertManifestCode: vi.fn(),
+  listInstallations: vi.fn(),
+  listInstallationRepositories: vi.fn(),
 }));
 vi.mock('@agentproof/codefix', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@agentproof/codefix')>();
@@ -30,6 +32,8 @@ vi.mock('@agentproof/codefix', async (importOriginal) => {
     findInstallation: stubs.findInstallation,
     mintInstallationToken: stubs.mintInstallationToken,
     convertManifestCode: stubs.convertManifestCode,
+    listInstallations: stubs.listInstallations,
+    listInstallationRepositories: stubs.listInstallationRepositories,
   };
 });
 
@@ -76,6 +80,8 @@ beforeEach(() => {
   stubs.findInstallation.mockReset();
   stubs.mintInstallationToken.mockReset();
   stubs.convertManifestCode.mockReset();
+  stubs.listInstallations.mockReset();
+  stubs.listInstallationRepositories.mockReset();
 });
 
 afterAll(() => {
@@ -152,6 +158,86 @@ describe('GitHub App status and registration', () => {
     // The state is single-use.
     const replay = await app.inject({ url: `/github/app/callback?code=abc_123&state=${state}` });
     expect(replay.statusCode).toBe(400);
+    await app.close();
+  });
+
+  it('lists the repositories of every installation, and nothing when the app is not configured', async () => {
+    const app = await server();
+    const empty = await app.inject({ url: '/github/app/repositories' });
+    expect(empty.statusCode).toBe(200);
+    expect(empty.json()).toEqual({ app: { configured: false }, repositories: [] });
+    expect(stubs.listInstallations).not.toHaveBeenCalled();
+
+    configureApp({ appId: 77, slug: 'agentproof-test' });
+    stubs.listInstallations.mockResolvedValue([
+      { installationId: 2, account: 'beta', repositorySelection: 'selected' },
+      { installationId: 1, account: 'alpha', repositorySelection: 'all' },
+    ]);
+    stubs.listInstallationRepositories.mockImplementation(async (id: number) =>
+      id === 1
+        ? [
+            {
+              fullName: 'alpha/store',
+              url: 'https://github.com/alpha/store',
+              private: false,
+              defaultBranch: 'main',
+            },
+            {
+              fullName: 'alpha/shared',
+              url: 'https://github.com/alpha/shared',
+              private: true,
+              defaultBranch: 'main',
+            },
+          ]
+        : [
+            {
+              fullName: 'alpha/shared',
+              url: 'https://github.com/alpha/shared',
+              private: true,
+              defaultBranch: 'main',
+            },
+            {
+              fullName: 'beta/shop',
+              url: 'https://github.com/beta/shop',
+              private: false,
+              defaultBranch: 'trunk',
+            },
+          ],
+    );
+    const listed = await app.inject({ url: '/github/app/repositories' });
+    expect(listed.statusCode).toBe(200);
+    expect(listed.json().repositories).toEqual([
+      {
+        fullName: 'alpha/shared',
+        url: 'https://github.com/alpha/shared',
+        private: true,
+        defaultBranch: 'main',
+        installationId: 2,
+        account: 'beta',
+      },
+      {
+        fullName: 'alpha/store',
+        url: 'https://github.com/alpha/store',
+        private: false,
+        defaultBranch: 'main',
+        installationId: 1,
+        account: 'alpha',
+      },
+      {
+        fullName: 'beta/shop',
+        url: 'https://github.com/beta/shop',
+        private: false,
+        defaultBranch: 'trunk',
+        installationId: 2,
+        account: 'beta',
+      },
+    ]);
+    expect(JSON.stringify(listed.json())).not.toContain('PRIVATE');
+
+    stubs.listInstallations.mockRejectedValue(new Error('GitHub could not be reached'));
+    const failed = await app.inject({ url: '/github/app/repositories' });
+    expect(failed.statusCode).toBe(502);
+    expect(failed.json()).toEqual({ error: 'GitHub could not be reached' });
     await app.close();
   });
 });

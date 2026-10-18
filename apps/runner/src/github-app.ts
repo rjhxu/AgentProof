@@ -6,13 +6,15 @@ import {
   describeGitHubApp,
   findInstallation,
   installUrl,
+  listInstallationRepositories,
+  listInstallations,
   loadGitHubAppConfig,
   mintInstallationToken,
   parseRepoFullName,
   type GitHubAppConfig,
   type LoadedGitHubAppConfig,
 } from '@agentproof/codefix';
-import type { GitHubAppStatus } from '@agentproof/shared';
+import type { GitHubAppRepository, GitHubAppStatus } from '@agentproof/shared';
 import { REPO_ROOT } from './config';
 
 /**
@@ -100,6 +102,33 @@ export function writeEnvValues(file: string, values: Record<string, string>): vo
 /** For tests: forget the cached configuration. */
 export function resetGitHubAppCache(): void {
   cached = undefined;
+}
+
+/**
+ * Every repository the app is installed on, across every installation, sorted by full name.
+ * The same repository granted twice is listed once. Throws when GitHub cannot be asked; the
+ * route turns that into a 502. Returns nothing when no app is configured.
+ */
+export async function listAppRepositories(): Promise<GitHubAppRepository[]> {
+  const state = githubAppState();
+  if (!state.config) return [];
+  const installations = await listInstallations(state.config);
+  const byName = new Map<string, GitHubAppRepository>();
+  for (const installation of installations) {
+    const repositories = await listInstallationRepositories(
+      installation.installationId,
+      state.config,
+    );
+    for (const repository of repositories) {
+      if (byName.has(repository.fullName)) continue;
+      byName.set(repository.fullName, {
+        ...repository,
+        installationId: installation.installationId,
+        account: installation.account,
+      });
+    }
+  }
+  return [...byName.values()].sort((a, b) => a.fullName.localeCompare(b.fullName));
 }
 
 export function githubAppStatus(): GitHubAppStatus {
