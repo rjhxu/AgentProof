@@ -1,0 +1,164 @@
+{
+  "id": "rep_34ee22383211",
+  "missionId": "mis_fef5fb3a30b1",
+  "generatedAt": "2026-10-18T03:29:55.192Z",
+  "mission": {
+    "id": "mis_fef5fb3a30b1",
+    "createdAt": "2026-10-18T03:29:43.024Z",
+    "storeUrl": "http://localhost:5050",
+    "rawPrompt": "Find a black hoodie in medium for less than $60, add it to the cart, and reach checkout. Do not place the order.",
+    "requirements": {
+      "product": "black hoodie",
+      "category": "apparel",
+      "attributes": {
+        "color": "black",
+        "size": "M"
+      },
+      "quantity": 1,
+      "maxUnitPrice": 60
+    },
+    "successMilestone": "checkout_review",
+    "allowedActions": ["navigate", "click", "type", "select", "scroll", "extract"],
+    "paymentAuthorized": false,
+    "maxSteps": 25
+  },
+  "storeUrl": "http://localhost:5050",
+  "runs": [
+    {
+      "runId": "run_3e9c9f391dec",
+      "agentKind": "alpha_semantic",
+      "agentName": "Agent Alpha",
+      "model": "claude-haiku-5-5",
+      "status": "passed",
+      "claim": {
+        "outcome": "done",
+        "summary": "Checkout review page reached showing 1 x Black Hoodie (Color: Black, Size: M) at $49.00, quantity 1, under the $60 max; stopping before Place order as required.",
+        "finalUrl": "http://localhost:5050/checkout"
+      },
+      "usage": {
+        "calls": 6,
+        "inputTokens": 15834,
+        "outputTokens": 877,
+        "reasoningTokens": 0,
+        "cachedInputTokens": 0,
+        "imageInputs": 0,
+        "estimatedCostUsd": 0.002022,
+        "llmLatencyMs": 8053
+      },
+      "durationMs": 8857,
+      "stepsUsed": 5,
+      "reportPath": "run_3e9c9f391dec/report.json"
+    },
+    {
+      "runId": "run_3adf313db5d2",
+      "agentKind": "gamma_structured",
+      "agentName": "Agent Gamma",
+      "model": "none",
+      "status": "passed",
+      "claim": {
+        "outcome": "done",
+        "summary": "Selected HOODIE-001-M from the live catalog. Read back the cart using this run’s session cookie."
+      },
+      "usage": {
+        "calls": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "reasoningTokens": 0,
+        "cachedInputTokens": 0,
+        "imageInputs": 0,
+        "estimatedCostUsd": 0,
+        "llmLatencyMs": 0
+      },
+      "durationMs": 71,
+      "stepsUsed": 0,
+      "reportPath": "run_3adf313db5d2/report.json"
+    }
+  ],
+  "matrix": {
+    "product_discovered": {
+      "alpha_semantic": "passed",
+      "beta_vision": "not_run",
+      "gamma_structured": "passed",
+      "sigma_hybrid": "not_run"
+    },
+    "correct_color_identified": {
+      "alpha_semantic": "passed",
+      "beta_vision": "not_run",
+      "gamma_structured": "passed",
+      "sigma_hybrid": "not_run"
+    },
+    "correct_size_identified": {
+      "alpha_semantic": "passed",
+      "beta_vision": "not_run",
+      "gamma_structured": "passed",
+      "sigma_hybrid": "not_run"
+    },
+    "added_to_cart": {
+      "alpha_semantic": "passed",
+      "beta_vision": "not_run",
+      "gamma_structured": "passed",
+      "sigma_hybrid": "not_run"
+    },
+    "cart_matches_variant": {
+      "alpha_semantic": "passed",
+      "beta_vision": "not_run",
+      "gamma_structured": "passed",
+      "sigma_hybrid": "not_run"
+    },
+    "cart_quantity_correct": {
+      "alpha_semantic": "passed",
+      "beta_vision": "not_run",
+      "gamma_structured": "passed",
+      "sigma_hybrid": "not_run"
+    },
+    "price_within_budget": {
+      "alpha_semantic": "passed",
+      "beta_vision": "not_run",
+      "gamma_structured": "passed",
+      "sigma_hybrid": "not_run"
+    },
+    "checkout_review_reached": {
+      "alpha_semantic": "passed",
+      "beta_vision": "not_run",
+      "gamma_structured": "passed",
+      "sigma_hybrid": "not_run"
+    },
+    "catalog_variant_resolves": {
+      "alpha_semantic": "not_run",
+      "beta_vision": "not_run",
+      "gamma_structured": "passed",
+      "sigma_hybrid": "not_run"
+    },
+    "catalog_price_matches_page": {
+      "alpha_semantic": "not_run",
+      "beta_vision": "not_run",
+      "gamma_structured": "not_run",
+      "sigma_hybrid": "not_run"
+    }
+  },
+  "attributions": [],
+  "costComparison": [
+    {
+      "agentKind": "alpha_semantic",
+      "model": "claude-haiku-5-5",
+      "status": "passed",
+      "inputTokens": 15834,
+      "outputTokens": 877,
+      "imageInputs": 0,
+      "estimatedCostUsd": 0.002022,
+      "relativeCost": 1
+    },
+    {
+      "agentKind": "gamma_structured",
+      "model": "none",
+      "status": "passed",
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "imageInputs": 0,
+      "estimatedCostUsd": 0,
+      "relativeCost": 0
+    }
+  ],
+  "headline": "2 of 2 agents completed the mission.",
+  "recommendations": []
+}

@@ -1,0 +1,13 @@
+{
+  "id": "iss_b2c3d4e5f6a1",
+  "runId": "run_895ecf41c7bf",
+  "checkpointId": "catalog_variant_resolves",
+  "category": "product_data_inconsistency",
+  "title": "The catalog's medium hoodie lands in the cart as a small",
+  "observed": "Requested HOODIE-001-M ({\"color\":\"black\",\"size\":\"M\"}); cart returned HOODIE-001-S ({\"color\":\"black\",\"size\":\"S\"}). size: required \"M\", cart has \"S\".",
+  "evidenceIds": ["ev_29cb95cf7d5f", "ev_d0219d7503b4"],
+  "inferredCause": "The cart API maps the medium variant id to the small one before adding the line, so a shopper that orders by catalog id gets the wrong size while a shopper that clicks through the page does not.",
+  "confidence": "medium",
+  "suggestedRepair": "Remove or correct the legacy variant map in the cart module so HOODIE-001-M resolves to itself.",
+  "suspectedFiles": ["apps/storefront/src/cart.ts"]
+}
