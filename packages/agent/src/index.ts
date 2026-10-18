@@ -11,3 +11,5 @@ export * from './browser-agent';
 export * from './gamma';
 export * from './report';
 export * from './narrative';
+export * from './scenarios';
+export * from './assess';
