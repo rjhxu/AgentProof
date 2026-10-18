@@ -1,5 +1,6 @@
-import type { AgentKind } from '@agentproof/shared';
+import type { AgentKind, CheckpointId } from '@agentproof/shared';
 
+import { stageOf } from '../format';
 import type { LaneState } from '../replay/reduce';
 
 /**
@@ -42,4 +43,72 @@ export function nextLane(lanes: LaneState[]): LaneState | undefined {
 /** The widest cost bar: the most expensive agent so far. Zero before anyone has spent. */
 export function costScale(lanes: LaneState[]): number {
   return lanes.reduce((max, l) => Math.max(max, l.costUsd), 0);
+}
+
+// ---- review: walking back through an agent's process once the scan is done -------------------
+
+/** Where a step's frame and snapshot live, from the run's report. */
+export type StepArtifact = { index: number; screenshotPath?: string; snapshotPath?: string };
+
+/** The checkpoints Gamma reports from the catalog alone, before it touches the cart. */
+const CATALOG_CHECKPOINTS: CheckpointId[] = [
+  'product_discovered',
+  'correct_color_identified',
+  'correct_size_identified',
+];
+
+/**
+ * How many positions a review of this lane has: one per step plus the verdict for a shopper;
+ * the catalog beat, the cart beat and the verdict for the data check.
+ */
+export function reviewLength(lane: LaneState): number {
+  return lane.agent.kind === 'gamma_structured' ? 3 : lane.steps.length + 1;
+}
+
+/** "step 2 of 6", "catalog", "cart", or "verdict". */
+export function reviewLabel(lane: LaneState, position: number): string {
+  const last = reviewLength(lane) - 1;
+  if (position >= last) return 'verdict';
+  if (lane.agent.kind === 'gamma_structured') return position === 0 ? 'catalog' : 'cart';
+  return `step ${position + 1} of ${lane.steps.length}`;
+}
+
+/**
+ * The lane as it stood at a review position, rebuilt from the finished lane: the steps up to
+ * that point, the cost so far, the frame and snapshot of that step, no checkpoints yet. The
+ * last position is the finished lane itself, verdict included.
+ */
+export function laneAtReview(
+  lane: LaneState,
+  artifacts: StepArtifact[],
+  position: number,
+): LaneState {
+  const last = reviewLength(lane) - 1;
+  if (position >= last) return lane;
+  if (lane.agent.kind === 'gamma_structured') {
+    if (position <= 0) {
+      return { ...lane, status: 'running', checkpoints: [], stage: 'find', reportPath: undefined };
+    }
+    return {
+      ...lane,
+      status: 'verifying',
+      checkpoints: lane.checkpoints.filter((c) => CATALOG_CHECKPOINTS.includes(c.id)),
+      stage: 'find',
+      reportPath: undefined,
+    };
+  }
+  const steps = lane.steps.slice(0, Math.max(0, position) + 1);
+  const current = steps[steps.length - 1];
+  const artifact = artifacts.find((a) => a.index === current?.index);
+  return {
+    ...lane,
+    status: 'running',
+    steps,
+    checkpoints: [],
+    costUsd: steps.reduce((sum, s) => sum + (s.usage?.estimatedCostUsd ?? 0), 0),
+    stage: stageOf(current?.url),
+    latestScreenshotPath: artifact?.screenshotPath,
+    latestSnapshotPath: artifact?.snapshotPath,
+    reportPath: undefined,
+  };
 }
