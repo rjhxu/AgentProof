@@ -6,6 +6,8 @@
   "defaultBranch": "main",
   "commitSha": "4c7e2b9f0d1a6e3b5c8d7f2a1b0e9d8c7a6b5f4e",
   "connectedAt": "2026-10-18T03:45:00.000Z",
+  "accessVia": "github_app",
+  "installationId": 48213907,
   "files": [
     "apps/storefront/package.json",
     "apps/storefront/public/images/.gitkeep",
