@@ -102,7 +102,7 @@ const TRUNCATED_FINISH_REASONS: ReadonlySet<string> = new Set([
 ]);
 const SCROLL_PX = 600;
 /** Consecutive error / invalid_action / rejected_by_policy steps before the run fails as stuck. */
-export const STUCK_STEP_LIMIT = 3;
+export const STUCK_STEP_LIMIT = 5;
 const DETAIL_MAX_CHARS = 300;
 const TRACE_FILE = 'trace.zip';
 

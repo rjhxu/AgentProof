@@ -116,7 +116,7 @@ An unusable reply (no JSON, output truncated at the token cap, a target in the w
 
 **Police.** `checkAction(mission, action, stepIndex)`. This one passes. A `navigate` to an outside host or a click on "Place order" is recorded as a step with outcome `rejected_by_policy`.
 
-**Act.** `select` on `Size` runs the ladder: `radio:M`, `combobox:Size`, `button:M`. None exists, the ladder throws, and the step is recorded with outcome `error` and the message. The prompt's retry rule allows one more attempt at the same target, after which the agent must continue with what the page offers or say `fail`. The loop ends a run as `fail` after three consecutive non-`ok` steps; the two-attempt rule sits deliberately below that cutoff so Alpha continues, adds size S, and the verifier records the mismatch, which is the documented Bug A result.
+**Act.** `select` on `Size` runs the ladder: `radio:M`, `combobox:Size`, `button:M`. None exists, the ladder throws, and the step is recorded with outcome `error` and the message. The prompt's retry rule allows one more attempt at the same target, after which the agent must continue with what the page offers or say `fail`. The loop ends a run as `fail` after five consecutive non-`ok` steps; the two-attempt rule sits deliberately below that cutoff so Alpha continues, adds size S, and the verifier records the mismatch, which is the documented Bug A result.
 
 **Record.** The `RunStep` (index, URL, action, outcome, detail, this call's usage, evidence ids) goes out through `onStep`, evidence through `onEvidence`, so the runner persists it and the dashboard sees it. Back to observe.
 
@@ -211,8 +211,8 @@ Validation state (2026-10-17 evening): the workspace typechecks and 333 tests pa
 
 ## 8. Things that bite
 
-- **Determinism.** The same mission runs on camera and in the rematch. Fixed system prompt, capped observation (6,000 characters of tree, 2,000 of text, five steps of history), a two-attempt rule on the same target, and `fail` after three consecutive stuck steps all push toward the same path each time. The scripted run removes the model entirely when the demo must not flake.
-- **Two attempts, three strikes.** `MAX_ATTEMPTS_PER_CONTROL` (prompt) must stay below `STUCK_STEP_LIMIT` (loop). If they were equal the harness would fail Alpha before it could continue with the default size, and the Bug A report would show an empty cart instead of the mismatch.
+- **Determinism.** The same mission runs on camera and in the rematch. Fixed system prompt, capped observation (6,000 characters of tree, 2,000 of text, five steps of history), a two-attempt rule on the same target, and `fail` after five consecutive stuck steps all push toward the same path each time. The scripted run removes the model entirely when the demo must not flake.
+- **Two attempts, five strikes.** `MAX_ATTEMPTS_PER_CONTROL` (prompt) must stay below `STUCK_STEP_LIMIT` (loop). If they were equal the harness would fail Alpha before it could continue with the default size, and the Bug A report would show an empty cart instead of the mismatch.
 - **Cost.** Each step is a model call. Alpha's tree is a few thousand tokens; Beta's screenshot is more; Sigma sends both. Output caps include reasoning tokens, so medium and high effort get a larger cap (8192) than low (4096); `decide()` leaves the cap to `llm.ts`.
 - **`page.evaluate()` under tsx.** Code that runs inside the page must not define name-inferred inner functions (`const f = () => ...`): tsx runs esbuild with `keepNames`, which injects a `__name` helper that does not exist in the page. Vitest does not, so only a live run catches it.
 - **The rematch proves both halves.** After the size picker becomes a real radio group, Alpha selects M with no agent changes. After the variant map is fixed, Gamma gets M back. The agents do not change; the store does.

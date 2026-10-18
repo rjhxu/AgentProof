@@ -979,10 +979,16 @@ function thesisParagraph(report: MissionReport): string {
     );
     const best = strongerPasses[0];
     if (best) {
-      const ratio = alphaCost === undefined ? '' : `${ratioTo(best.c)} of ${fmtUsd(alphaCost)}`;
-      sentences.push(
-        `${best.r.agentName} could, at ${fmtUsd(best.c)} (estimated)${ratio}: that gap is the price of the store's defects.`,
-      );
+      if (alphaCost !== undefined && best.c <= alphaCost) {
+        sentences.push(
+          `${best.r.agentName} completed it at ${fmtUsd(best.c)} (estimated); ${alphaName} spent ${fmtUsd(alphaCost)} on retries and still failed. The cheaper path only works once the store exposes its controls.`,
+        );
+      } else {
+        const ratio = alphaCost === undefined ? '' : `${ratioTo(best.c)} of ${fmtUsd(alphaCost)}`;
+        sentences.push(
+          `${best.r.agentName} could, at ${fmtUsd(best.c)} (estimated)${ratio}: that gap is the price of the store's defects.`,
+        );
+      }
     } else if (passed.length) {
       sentences.push(
         'Cost comparison not available: no estimated cost was recorded for the browser agents that completed it.',
