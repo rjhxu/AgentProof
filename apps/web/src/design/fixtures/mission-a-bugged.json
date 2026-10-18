@@ -18,14 +18,7 @@
       "maxUnitPrice": 60
     },
     "successMilestone": "checkout_review",
-    "allowedActions": [
-      "navigate",
-      "click",
-      "type",
-      "select",
-      "scroll",
-      "extract"
-    ],
+    "allowedActions": ["navigate", "click", "type", "select", "scroll", "extract"],
     "paymentAuthorized": false,
     "maxSteps": 25
   },
@@ -46,9 +39,7 @@
         "id": "correct_size_identified",
         "status": "failed",
         "detail": "Required size \"M\", observed \"S\"",
-        "evidenceIds": [
-          "ev_295b33586ab4"
-        ]
+        "evidenceIds": ["ev_295b33586ab4"]
       },
       "usage": {
         "calls": 7,
@@ -128,9 +119,7 @@
         "id": "cart_matches_variant",
         "status": "failed",
         "detail": "size: required \"M\", cart has \"S\"",
-        "evidenceIds": [
-          "ev_d0219d7503b4"
-        ]
+        "evidenceIds": ["ev_d0219d7503b4"]
       },
       "usage": {
         "calls": 0,
@@ -221,9 +210,7 @@
         "gamma_structured": "passed",
         "sigma_hybrid": "passed"
       },
-      "failingAgents": [
-        "alpha_semantic"
-      ]
+      "failingAgents": ["alpha_semantic"]
     },
     {
       "checkpointId": "cart_matches_variant",
@@ -236,9 +223,7 @@
         "gamma_structured": "failed",
         "sigma_hybrid": "passed"
       },
-      "failingAgents": [
-        "gamma_structured"
-      ]
+      "failingAgents": ["gamma_structured"]
     },
     {
       "checkpointId": "cart_matches_variant",
@@ -251,9 +236,7 @@
         "gamma_structured": "failed",
         "sigma_hybrid": "passed"
       },
-      "failingAgents": [
-        "alpha_semantic"
-      ]
+      "failingAgents": ["alpha_semantic"]
     }
   ],
   "costComparison": [

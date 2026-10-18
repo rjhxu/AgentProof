@@ -18,14 +18,7 @@
       "maxUnitPrice": 60
     },
     "successMilestone": "checkout_review",
-    "allowedActions": [
-      "navigate",
-      "click",
-      "type",
-      "select",
-      "scroll",
-      "extract"
-    ],
+    "allowedActions": ["navigate", "click", "type", "select", "scroll", "extract"],
     "paymentAuthorized": false,
     "maxSteps": 25
   },

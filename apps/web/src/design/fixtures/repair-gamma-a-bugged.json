@@ -2,9 +2,7 @@
   "id": "rep_b2c3d4e5f6a1",
   "issueId": "iss_b2c3d4e5f6a1",
   "summary": "Remove the legacy variant map so HOODIE-001-M resolves to itself",
-  "files": [
-    "apps/storefront/src/cart.ts"
-  ],
+  "files": ["apps/storefront/src/cart.ts"],
   "status": "proposed",
   "createdAt": "2026-10-18T03:40:00.000Z",
   "diff": "--- a/apps/storefront/src/cart.ts\n+++ b/apps/storefront/src/cart.ts\n@@ -29,9 +29,7 @@\n  * The expected repair deletes this map (or fixes the M entry). Keep the marker comment\n  * so the diagnostics package can locate it.\n  */\n-const LEGACY_VARIANT_MAP: Record<string, string> = {\n-  'HOODIE-001-M': 'HOODIE-001-S', // BUG: should be HOODIE-001-M\n-};\n+const LEGACY_VARIANT_MAP: Record<string, string> = {};\n \n export function resolveVariantId(requested: string): string {\n   return LEGACY_VARIANT_MAP[requested] ?? requested;\n"

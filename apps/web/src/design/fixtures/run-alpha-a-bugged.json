@@ -20,14 +20,7 @@
       "maxUnitPrice": 60
     },
     "successMilestone": "checkout_review",
-    "allowedActions": [
-      "navigate",
-      "click",
-      "type",
-      "select",
-      "scroll",
-      "extract"
-    ],
+    "allowedActions": ["navigate", "click", "type", "select", "scroll", "extract"],
     "paymentAuthorized": false,
     "maxSteps": 25
   },
@@ -35,13 +28,8 @@
     "kind": "alpha_semantic",
     "name": "Agent Alpha",
     "strategy": "Semantic browser agent (accessibility tree only, text model)",
-    "perceives": [
-      "accessibility tree (roles + accessible names)",
-      "page text excerpt"
-    ],
-    "targetGrammars": [
-      "role:name"
-    ],
+    "perceives": ["accessibility tree (roles + accessible names)", "page text excerpt"],
+    "targetGrammars": ["role:name"],
     "model": "claude-haiku-5-5",
     "provider": "anthropic",
     "effort": "low"
@@ -63,49 +51,37 @@
       "id": "correct_color_identified",
       "status": "passed",
       "detail": "Required color \"black\", observed \"black\"",
-      "evidenceIds": [
-        "ev_295b33586ab4"
-      ]
+      "evidenceIds": ["ev_295b33586ab4"]
     },
     {
       "id": "correct_size_identified",
       "status": "failed",
       "detail": "Required size \"M\", observed \"S\"",
-      "evidenceIds": [
-        "ev_295b33586ab4"
-      ]
+      "evidenceIds": ["ev_295b33586ab4"]
     },
     {
       "id": "added_to_cart",
       "status": "passed",
       "detail": "1 line item(s) in cart",
-      "evidenceIds": [
-        "ev_295b33586ab4"
-      ]
+      "evidenceIds": ["ev_295b33586ab4"]
     },
     {
       "id": "cart_matches_variant",
       "status": "failed",
       "detail": "size: required \"M\", cart has \"S\"",
-      "evidenceIds": [
-        "ev_295b33586ab4"
-      ]
+      "evidenceIds": ["ev_295b33586ab4"]
     },
     {
       "id": "cart_quantity_correct",
       "status": "passed",
       "detail": "Required 1, cart has 1",
-      "evidenceIds": [
-        "ev_295b33586ab4"
-      ]
+      "evidenceIds": ["ev_295b33586ab4"]
     },
     {
       "id": "price_within_budget",
       "status": "passed",
       "detail": "unit $49.00, subtotal $49.00 within budget",
-      "evidenceIds": [
-        "ev_295b33586ab4"
-      ]
+      "evidenceIds": ["ev_295b33586ab4"]
     },
     {
       "id": "checkout_review_reached",
@@ -117,9 +93,7 @@
     "id": "correct_size_identified",
     "status": "failed",
     "detail": "Required size \"M\", observed \"S\"",
-    "evidenceIds": [
-      "ev_295b33586ab4"
-    ]
+    "evidenceIds": ["ev_295b33586ab4"]
   },
   "observedCart": {
     "items": [
@@ -321,11 +295,7 @@
     "estimatedCostUsd": 0.002454
   },
   "durationMs": 12912,
-  "evidenceIds": [
-    "ev_295b33586ab4",
-    "ev_8a93ebcf5865",
-    "ev_f9828dccf183"
-  ],
+  "evidenceIds": ["ev_295b33586ab4", "ev_8a93ebcf5865", "ev_f9828dccf183"],
   "artifacts": [
     "run_e2f6442a5419/step-000.aria.txt",
     "run_e2f6442a5419/step-000.png",

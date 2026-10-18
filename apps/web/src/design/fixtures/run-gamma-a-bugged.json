@@ -20,14 +20,7 @@
       "maxUnitPrice": 60
     },
     "successMilestone": "checkout_review",
-    "allowedActions": [
-      "navigate",
-      "click",
-      "type",
-      "select",
-      "scroll",
-      "extract"
-    ],
+    "allowedActions": ["navigate", "click", "type", "select", "scroll", "extract"],
     "paymentAuthorized": false,
     "maxSteps": 25
   },
@@ -35,10 +28,7 @@
     "kind": "gamma_structured",
     "name": "Agent Gamma",
     "strategy": "Structured commerce inspector (catalog feed + cart API, no LLM)",
-    "perceives": [
-      "catalog feed (JSON)",
-      "cart API (JSON)"
-    ],
+    "perceives": ["catalog feed (JSON)", "cart API (JSON)"],
     "targetGrammars": [],
     "model": "none",
     "provider": "none"
@@ -52,83 +42,62 @@
     {
       "id": "product_discovered",
       "status": "passed",
-      "evidenceIds": [
-        "ev_29cb95cf7d5f"
-      ],
+      "evidenceIds": ["ev_29cb95cf7d5f"],
       "detail": "Identified in live catalog: HOODIE-001-M"
     },
     {
       "id": "correct_color_identified",
       "status": "passed",
       "detail": "Identified in live catalog: HOODIE-001-M",
-      "evidenceIds": [
-        "ev_29cb95cf7d5f"
-      ]
+      "evidenceIds": ["ev_29cb95cf7d5f"]
     },
     {
       "id": "correct_size_identified",
       "status": "passed",
       "detail": "Identified in live catalog: HOODIE-001-M",
-      "evidenceIds": [
-        "ev_29cb95cf7d5f"
-      ]
+      "evidenceIds": ["ev_29cb95cf7d5f"]
     },
     {
       "id": "added_to_cart",
       "status": "passed",
       "detail": "1 line item(s) in cart",
-      "evidenceIds": [
-        "ev_d0219d7503b4"
-      ]
+      "evidenceIds": ["ev_d0219d7503b4"]
     },
     {
       "id": "cart_matches_variant",
       "status": "failed",
       "detail": "size: required \"M\", cart has \"S\"",
-      "evidenceIds": [
-        "ev_d0219d7503b4"
-      ]
+      "evidenceIds": ["ev_d0219d7503b4"]
     },
     {
       "id": "cart_quantity_correct",
       "status": "passed",
       "detail": "Required 1, cart has 1",
-      "evidenceIds": [
-        "ev_d0219d7503b4"
-      ]
+      "evidenceIds": ["ev_d0219d7503b4"]
     },
     {
       "id": "price_within_budget",
       "status": "passed",
       "detail": "unit $49.00, subtotal $49.00 within budget",
-      "evidenceIds": [
-        "ev_d0219d7503b4"
-      ]
+      "evidenceIds": ["ev_d0219d7503b4"]
     },
     {
       "id": "checkout_review_reached",
       "status": "passed",
-      "evidenceIds": [
-        "ev_e5535e319d3a"
-      ]
+      "evidenceIds": ["ev_e5535e319d3a"]
     },
     {
       "id": "catalog_variant_resolves",
       "status": "failed",
       "detail": "Requested HOODIE-001-M ({\"color\":\"black\",\"size\":\"M\"}); cart returned HOODIE-001-S ({\"color\":\"black\",\"size\":\"S\"}).",
-      "evidenceIds": [
-        "ev_29cb95cf7d5f",
-        "ev_d0219d7503b4"
-      ]
+      "evidenceIds": ["ev_29cb95cf7d5f", "ev_d0219d7503b4"]
     }
   ],
   "firstFailure": {
     "id": "cart_matches_variant",
     "status": "failed",
     "detail": "size: required \"M\", cart has \"S\"",
-    "evidenceIds": [
-      "ev_d0219d7503b4"
-    ]
+    "evidenceIds": ["ev_d0219d7503b4"]
   },
   "observedCart": {
     "items": [
@@ -161,10 +130,6 @@
     "estimatedCostUsd": 0
   },
   "durationMs": 50,
-  "evidenceIds": [
-    "ev_29cb95cf7d5f",
-    "ev_d0219d7503b4",
-    "ev_e5535e319d3a"
-  ],
+  "evidenceIds": ["ev_29cb95cf7d5f", "ev_d0219d7503b4", "ev_e5535e319d3a"],
   "artifacts": []
 }
