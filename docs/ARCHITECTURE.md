@@ -1,6 +1,6 @@
 # Architecture
 
-Engineering companion to [SPEC.md](./SPEC.md). This describes what is in the repo and how the pieces talk to each other, as of 2026-10-18. The agents are described in [AGENTS.md](./AGENTS.md); what they produced live is in [RESULTS.md](./RESULTS.md). The code-fix agent is in [CODEFIX.md](./CODEFIX.md) and its live results in [CODEFIX-RESULTS.md](./CODEFIX-RESULTS.md).
+Engineering companion to [SPEC.md](./SPEC.md). This describes what is in the repo and how the pieces talk to each other, as of 2026-10-18. The agents are described in [AGENTS.md](./AGENTS.md); what they produced live is in [RESULTS.md](./RESULTS.md).
 
 ## Runtime topology (local dev)
 
@@ -32,7 +32,6 @@ All three services read `.env` at the repo root (`tsx --env-file-if-exists` and 
 | `@agentproof/verifier`    | shared                                                                         | `verify()` turns a mission plus observed cart and page facts into checkpoints. `attributeMission()` and `recommendationsFrom()` do cross-agent attribution. `compareRuns()` builds the rematch delta. No network, no model.                                                                                                            |
 | `@agentproof/agent`       | shared, playwright, `@anthropic-ai/sdk` (inside `llm.ts` and `claude.ts` only) | `getLlm()` with the Anthropic, xAI and mock adapters; `profiles.ts` (tiered models, price table); the browser loop for Alpha, Beta and Sigma; `gamma.ts`; `policy.ts`; `assess.ts` (cart through cookies, verifier input); reports and the narrator; `scenarios.ts`; the mission generator; the CLI; `scripts/` (smoke, scripted run). |
 | `@agentproof/diagnostics` | shared, agent                                                                  | `diagnose()` (evidence in, `Issue` out; still on the deprecated `getClaude()` client, Haiku by default through the `diagnosis` role), `proposeRepair()` and `applyRepair()`.                                                                                                                                                           |
-| `@agentproof/codefix`     | shared, agent                                                                  | The code-fix agent ([CODEFIX.md](./CODEFIX.md)): evidence bundle, file localization, the proposer and reviewer calls, exact edits to a unified diff, scope checks, `git apply`/`npm`/`tsc` runners, a GitHub client that can only open draft pull requests, and the Markdown record. The orchestrator is `apps/runner/src/codefix.ts`. |
 
 Packages are consumed as raw TypeScript (`exports` point at `src/index.ts`). `tsx` runs them directly in the Node apps; Next compiles them through `transpilePackages`. There is no build step.
 
@@ -45,25 +44,23 @@ Packages are consumed as raw TypeScript (`exports` point at `src/index.ts`). `ts
 5. **Agent report.** `buildAgentReport()` writes `<runId>/report.json` and `report.md` (profile, checkpoints, cart, step log with evidence paths, failure point, the narrator's account, usage). The verdict and the report path are saved in one write and the terminal status is emitted last, so a poller never sees a finished run without its report.
 6. **Mission report.** Whenever a run finishes, `buildMissionReport()` writes `missions/<missionId>/report.json` and `report.md`: the checkpoint x agent matrix, deterministic attribution, cost comparison, headline, recommendations. `GET /missions/:id/report` serves it (`?refresh=1` rebuilds).
 7. **Watch.** `GET /runs/:id/events` streams `RunEvent`s over SSE until the terminal status; `GET /runs/:id` returns the full document for polling.
-8. **Fix loop (partly built).** `POST /runs/:id/diagnose` → `diagnose()` → `Issue` (observed text from the verifier, inferred cause from the model). `POST /issues/:id/repair` → `Repair` (a diff limited to the store). `POST /repairs/:id/apply` applies it; today this path is the deterministic rule for Bug B. `POST /runs/:id/rematch` and `GET /runs/:id/compare/:otherId` produce the before/after. The repository connection routes clone a GitHub repo shallowly into `data/repositories/`; the code-fix agent ([CODEFIX.md](./CODEFIX.md)) consumes the reports and that snapshot and produces a code-validated diff, a pushed `agentproof/*` branch or a draft pull request. It never merges.
+8. **Fix loop (partly built).** `POST /runs/:id/diagnose` → `diagnose()` → `Issue` (observed text from the verifier, inferred cause from the model). `POST /issues/:id/repair` → `Repair` (a diff limited to the store). `POST /repairs/:id/apply` applies it; today this path is the deterministic rule for Bug B. `POST /runs/:id/rematch` and `GET /runs/:id/compare/:otherId` produce the before/after. The repository connection routes clone a GitHub repo shallowly into `data/repositories/` for the code-fix agent that will consume the reports.
 
 ## Runner routes
 
-| Route                                                                                          | What                                                                                                  |
-| ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `GET /health`                                                                                  | liveness                                                                                              |
-| `POST /missions`, `POST /missions/fixture`, `GET /missions/:id`                                | create (generated or scenario) and read a mission with its runs                                       |
-| `POST /missions/:id/runs`                                                                      | start runs for a list of agent kinds                                                                  |
-| `GET /missions/:id/report`, `GET /missions/:id/report.md`                                      | cross-agent mission report (JSON, Markdown)                                                           |
-| `GET /runs`, `GET /runs/:id`, `GET /runs/:id/events`                                           | runs, one run, live SSE stream                                                                        |
-| `GET /runs/:id/report`, `GET /runs/:id/report.md`                                              | agent report                                                                                          |
-| `POST /runs/:id/diagnose`, `POST /issues/:id/repair`, `POST /repairs/:id/apply`                | diagnosis, repair proposal, apply                                                                     |
-| `POST /runs/:id/rematch`, `GET /runs/:id/compare/:otherId`                                     | rematch and comparison                                                                                |
-| `POST /demo/hoodie`                                                                            | the preset Gamma demo mission                                                                         |
-| `GET /artifacts/*`                                                                             | screenshots, aria snapshots, traces, reports (static; path traversal refused)                         |
-| repository routes (`apps/runner/src/repository-routes.ts`)                                     | connect, inspect and disconnect a GitHub repo snapshot (localhost only)                               |
-| `POST /runs/:id/codefix`, `GET /runs/:id/codefixes`                                            | start the code-fix agent on a failed run with a connected repository (localhost only), list its fixes |
-| `GET /codefix/:id`, `/codefix/:id/events`, `/codefix/:id/report.md`, `/codefix/:id/patch.diff` | the fix record, its SSE stream, the Markdown rendering, the validated diff                            |
+| Route                                                                           | What                                                                          |
+| ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `GET /health`                                                                   | liveness                                                                      |
+| `POST /missions`, `POST /missions/fixture`, `GET /missions/:id`                 | create (generated or scenario) and read a mission with its runs               |
+| `POST /missions/:id/runs`                                                       | start runs for a list of agent kinds                                          |
+| `GET /missions/:id/report`, `GET /missions/:id/report.md`                       | cross-agent mission report (JSON, Markdown)                                   |
+| `GET /runs`, `GET /runs/:id`, `GET /runs/:id/events`                            | runs, one run, live SSE stream                                                |
+| `GET /runs/:id/report`, `GET /runs/:id/report.md`                               | agent report                                                                  |
+| `POST /runs/:id/diagnose`, `POST /issues/:id/repair`, `POST /repairs/:id/apply` | diagnosis, repair proposal, apply                                             |
+| `POST /runs/:id/rematch`, `GET /runs/:id/compare/:otherId`                      | rematch and comparison                                                        |
+| `POST /demo/hoodie`                                                             | the preset Gamma demo mission                                                 |
+| `GET /artifacts/*`                                                              | screenshots, aria snapshots, traces, reports (static; path traversal refused) |
+| repository routes (`apps/runner/src/repository-routes.ts`)                      | connect, inspect and disconnect a GitHub repo snapshot (localhost only)       |
 
 The request and response shapes are in `packages/shared/src/api.ts`; keep them in sync with `routes.ts` and `apps/web/src/lib/api.ts`.
 
@@ -106,8 +103,7 @@ data/
       report.json, report.md         the cross-agent mission report
     cli/<runId>/                     the same, for `pnpm cli` runs
     scripted/<runId>/                the same, for the scripted harness
-  repositories/<id>/                 shallow bare clones from the repository connection (<id>.work: a worktree while a fix runs)
-  github-app.json                    the GitHub App id and private key from the manifest flow (mode 0600; never served)
+  repositories/<id>/                 shallow clones from the repository connection
 ```
 
 `Evidence.path` and the report paths are relative to `data/artifacts`; the runner serves them at `GET /artifacts/*`.
@@ -118,7 +114,6 @@ data/
 | -------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | `scripts/run-mission.mjs`                    | One scenario mission through the runner for a list of agents; prints verdicts, matrix, attribution, cost |
 | `scripts/make-fixed-store.sh <dir>`          | Exports the store with the five reference patches applied into a sibling repo (tags `baseline`, `fixed`) |
-| `scripts/codefix.mjs --run <runId>`          | Drives the code-fix agent for one failed run through the runner and prints the record                    |
 | `docs/storefront/export-standalone.sh <dir>` | Exports the bugged store as its own repo, optionally with the hint comments stripped (`--blind`)         |
 | `docs/storefront/verify-scenarios.mjs`       | Grader: semantic and mouse shoppers on every scenario; `STORE_URL` picks the store                       |
 | `packages/agent/scripts/llm-smoke.ts`        | Provider and key check (`pnpm llm:smoke`)                                                                |
@@ -126,4 +121,4 @@ data/
 
 ## Environment variables
 
-See `.env.example` for the full list with defaults. The ones that matter: `ANTHROPIC_API_KEY` (the team key; `GROK_API_KEY`/`XAI_API_KEY` selects xAI, `AGENTPROOF_LLM_PROVIDER` forces one), `AGENTPROOF_MODEL_<ALPHA|BETA|SIGMA|NARRATOR|MISSION|DIAGNOSIS|CODEFIX|REVIEW>` and `AGENTPROOF_MODEL` (model overrides; defaults in `profiles.ts`), `STOREFRONT_PORT` and `STOREFRONT_URL` (5000 by default; macOS usually holds 5000, use 5050), `AGENTPROOF_ALLOWED_HOSTS` (default `localhost,127.0.0.1`), `AGENTPROOF_MAX_STEPS` (default 25), `PLAYWRIGHT_HEADED=1` for recording, `AGENTPROOF_LLM_DEBUG=1` for one line per model call (never keys or image data).
+See `.env.example` for the full list with defaults. The ones that matter: `ANTHROPIC_API_KEY` (the team key; `GROK_API_KEY`/`XAI_API_KEY` selects xAI, `AGENTPROOF_LLM_PROVIDER` forces one), `AGENTPROOF_MODEL_<ALPHA|BETA|SIGMA|NARRATOR|MISSION|DIAGNOSIS>` and `AGENTPROOF_MODEL` (model overrides; defaults in `profiles.ts`), `STOREFRONT_PORT` and `STOREFRONT_URL` (5000 by default; macOS usually holds 5000, use 5050), `AGENTPROOF_ALLOWED_HOSTS` (default `localhost,127.0.0.1`), `AGENTPROOF_MAX_STEPS` (default 25), `PLAYWRIGHT_HEADED=1` for recording, `AGENTPROOF_LLM_DEBUG=1` for one line per model call (never keys or image data).

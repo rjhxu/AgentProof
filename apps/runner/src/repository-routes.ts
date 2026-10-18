@@ -2,12 +2,11 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { ConnectRepositoryRequest, RepositoryConnection, newId } from '@agentproof/shared';
 import * as db from './db';
 import { connectRepository, removeRepository, RepositoryConnectionError } from './repositories';
-import { resolveGitHubCredential } from './github-app';
 
 const connecting = new Set<string>();
 
 /** This prototype has no accounts; source access is available only from the local dashboard. */
-export async function localAccess(request: FastifyRequest, reply: FastifyReply) {
+async function localAccess(request: FastifyRequest, reply: FastifyReply) {
   if (!/^(localhost|127\.0\.0\.1|\[::1\])(?::\d{1,5})?$/i.test(request.headers.host ?? '')) {
     return reply.code(403).send({ error: 'Repository connections require a localhost address.' });
   }
@@ -37,14 +36,13 @@ export async function registerRepositoryRoutes(app: FastifyInstance): Promise<vo
     const runId = request.params.id;
     const run = db.getRun(runId);
     if (!run) return reply.code(404).send({ error: 'Run not found.' });
-    // Any failed run with a failed checkpoint may connect a repository: the code-fix agent
-    // (docs/CODEFIX.md) works from browser-agent runs as well as Gamma runs.
     if (
+      run.agent.kind !== 'gamma_structured' ||
       run.status !== 'failed' ||
       !run.verification?.checkpoints.some((checkpoint) => checkpoint.status === 'failed')
     ) {
       return reply.code(409).send({
-        error: 'Complete a run with failed checkpoints before connecting a repository.',
+        error: 'Complete a Gamma run with failed checkpoints before connecting a repository.',
       });
     }
     const parsed = ConnectRepositoryRequest.safeParse(request.body);
@@ -63,20 +61,9 @@ export async function registerRepositoryRoutes(app: FastifyInstance): Promise<vo
     const id = newId('repo');
     let cloned = false;
     try {
-      // The GitHub App installation, when present, reads the repository with a token scoped to
-      // it; a request token is the fallback. The token is used for the clone and then dropped.
-      const credential = await resolveGitHubCredential(parsed.data.url, 'read', parsed.data.token);
-      const metadata = await connectRepository(
-        { url: parsed.data.url, ...(credential.token ? { token: credential.token } : {}) },
-        id,
-      );
+      const metadata = await connectRepository(parsed.data, id);
       cloned = true;
-      const repository = RepositoryConnection.parse({
-        ...metadata,
-        runId,
-        accessVia: credential.kind === 'none' ? 'public' : credential.kind,
-        ...(credential.installationId ? { installationId: credential.installationId } : {}),
-      });
+      const repository = RepositoryConnection.parse({ ...metadata, runId });
       db.saveRepository(repository);
       return { repository };
     } catch (error) {

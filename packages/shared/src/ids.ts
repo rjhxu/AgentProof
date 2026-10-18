@@ -5,7 +5,7 @@
  */
 const webCrypto = (globalThis as unknown as { crypto: { randomUUID(): string } }).crypto;
 
-export function newId(prefix: 'mis' | 'run' | 'ev' | 'iss' | 'rep' | 'repo' | 'fix'): string {
+export function newId(prefix: 'mis' | 'run' | 'ev' | 'iss' | 'rep' | 'repo'): string {
   return `${prefix}_${webCrypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
 }
 

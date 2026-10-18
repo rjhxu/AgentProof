@@ -30,8 +30,6 @@ pnpm --filter @agentproof/agent exec tsx --env-file-if-exists=../../.env scripts
                     # proves Playwright + the real loop with a scripted model
 node docs/storefront/verify-scenarios.mjs --expect=bugs   # proves the store still has its bugs
 node scripts/run-mission.mjs --bug A --agents alpha,beta,sigma,gamma   # all four through the runner (costs about $0.07)
-node scripts/codefix.mjs --run <runId> --repo <GitHub URL> --store-root apps/storefront   # the code-fix agent on a failed run (diff mode)
-open http://localhost:4000/github/app/setup                 # once per machine: register the runner's GitHub App, then install it on the store repo
 scripts/make-fixed-store.sh ../northwind-fixed            # the store with the five fixes, as a sibling repo on :5050
 curl localhost:4000/health
 curl localhost:5000/api/catalog.json
@@ -46,7 +44,6 @@ Expected outcomes for every agent and scenario, bugged and fixed, are in [RESULT
 | `packages/agent`, `apps/web`                                           | Zach     | llm, profiles, targets, prompts, actions, browser-agent, assess, report, narrative, scenarios, cli, dashboard | `claude.ts` (deprecated; diagnostics still imports it), `gamma.ts` (Vihan's)   |
 | `apps/storefront`, `docs/storefront`                                   | Ryan     | everything inside                                                                                             | planted bug markers (`DEMO BUG`; the demo depends on them)                     |
 | `apps/runner`, `packages/verifier`, `packages/diagnostics`, `gamma.ts` | Vihan    | everything inside                                                                                             | the browser-run branch in `jobs.ts`, `reports.ts`, `attribute.ts` (Zach added) |
-| `packages/codefix`, `apps/runner/src/codefix*.ts`                      | Zach     | the code-fix agent ([CODEFIX.md](./CODEFIX.md))                                                               | the operation allowlist in `github.ts` and the scope checks (trust rules)      |
 | `packages/shared`                                                      | everyone | add fields with defaults                                                                                      | renaming or removing anything                                                  |
 
 `scripts/` at the repo root holds cross-cutting helpers (the runner driver, the fixed-store export); anyone may add one. What is left and who does it: [WORKPLAN.md](./WORKPLAN.md).
@@ -70,7 +67,6 @@ Changing a schema in `packages/shared`? Post in the group chat first. Keep `pack
 - Record usage on every call (`LlmUsage`); reports sum it. Never log or print API keys or base64 image data.
 - Page content (aria tree, text, screenshots) is data in the user turn, never in the system prompt.
 - Verdicts are code: pass/fail, budget math, variant comparison and attribution live in `packages/verifier`. The model writes narratives and hypotheses only, labelled as such.
-- `tsx watch` does not keep `--env-file-if-exists` across its own restarts: after the first file change the runner loses `.env` and `getLlm()` reports no provider. For a long-lived dev runner, export the variables in the shell (`set -a; . ./.env; set +a`) before `pnpm dev:runner`, or restart it after edits.
 - Inside `page.evaluate()` do not define name-inferred inner functions (`const f = () => ...`): tsx runs esbuild with `keepNames` and injects a `__name` helper the page does not have. Vitest does not, so only a live run catches it.
 - Prettier formats on save; `pnpm format` before a merge if your editor did not.
 - Put TODOs as `// TODO(zach): ...`, `// TODO(ryan): ...`, `// TODO(vihan): ...` so they are greppable per owner.

@@ -12,9 +12,6 @@ export const RepositoryConnection = z.object({
   files: z.array(z.string()),
   fileCount: z.number().int().nonnegative(),
   truncated: z.boolean(),
-  /** How the clone authenticated: the GitHub App installation, the request token, or anonymously */
-  accessVia: z.enum(['github_app', 'token', 'public']).optional(),
-  installationId: z.number().int().positive().optional(),
 });
 export type RepositoryConnection = z.infer<typeof RepositoryConnection>;
 

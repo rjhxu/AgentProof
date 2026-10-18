@@ -12,7 +12,6 @@
   },
   "dependencies": {
     "@agentproof/agent": "workspace:*",
-    "@agentproof/codefix": "workspace:*",
     "@agentproof/diagnostics": "workspace:*",
     "@agentproof/shared": "workspace:*",
     "@agentproof/verifier": "workspace:*",

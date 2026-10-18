@@ -13,7 +13,6 @@ build/
 .env
 .env.*
 !.env.example
-data/github-app.json
 
 # test evidence (screenshots, traces, recordings, sqlite)
 data/artifacts/*
