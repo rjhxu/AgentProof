@@ -506,15 +506,17 @@ describe('runBrowserAgent: Alpha on Bug A', () => {
     );
   });
 
-  it('fails as stuck after three consecutive error steps', async () => {
+  it('fails as stuck after STUCK_STEP_LIMIT consecutive error steps', async () => {
     const r = await run('alpha_semantic', [select('Size', 'M')]);
-    expect(r.steps.map((s) => s.outcome)).toEqual(['error', 'error', 'error']);
+    expect(r.steps.map((s) => s.outcome)).toEqual(
+      Array.from({ length: STUCK_STEP_LIMIT }, () => 'error'),
+    );
     expect(r.result.outcome).toBe('fail');
     expect(r.result.summary).toBe(
       'stuck: no radio "M", combobox "Size", or button "M" in the accessibility tree',
     );
     expect(r.result.stepsUsed).toBe(STUCK_STEP_LIMIT);
-    expect(r.llm.requests).toHaveLength(3);
+    expect(r.llm.requests).toHaveLength(STUCK_STEP_LIMIT);
     expect(r.browser.close).toHaveBeenCalledTimes(1);
   });
 
