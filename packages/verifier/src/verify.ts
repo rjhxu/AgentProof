@@ -1,5 +1,6 @@
 import {
   CHECKPOINT_ORDER,
+  attributeMatches,
   type Checkpoint,
   type CheckpointId,
   type Mission,
@@ -30,23 +31,6 @@ export interface VerificationInput {
 }
 
 const norm = (s: string | undefined) => (s ?? '').trim().toLowerCase();
-
-function attributeMatches(required: string, observed: string | undefined): boolean {
-  if (observed === undefined) return false;
-  const r = norm(required);
-  const o = norm(observed);
-  if (r === o) return true;
-  // Tolerate common size spellings: "M" vs "medium"
-  const sizeAliases: Record<string, string[]> = {
-    xs: ['extra small', 'x-small'],
-    s: ['small'],
-    m: ['medium', 'med'],
-    l: ['large'],
-    xl: ['extra large', 'x-large'],
-  };
-  const aliases = sizeAliases[r] ?? [];
-  return aliases.includes(o) || (sizeAliases[o] ?? []).includes(r);
-}
 
 /**
  * Deterministic verification. Budget arithmetic and variant comparisons live here, never in an LLM.

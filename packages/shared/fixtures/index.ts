@@ -153,7 +153,7 @@ export const alphaFailedRun: Run = {
       },
       { id: 'cart_quantity_correct', status: 'passed', evidenceIds: ['ev_demo00000003'] },
       { id: 'price_within_budget', status: 'passed', detail: '$49.00 <= $60.00', evidenceIds: [] },
-      { id: 'checkout_review_reached', status: 'not_tested', evidenceIds: [] },
+      { id: 'checkout_review_reached', status: 'passed', evidenceIds: [] },
     ],
     firstFailure: {
       id: 'correct_size_identified',

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { AgentKind } from './agent';
 import { Issue, Repair, RunComparison } from './issue';
 import { Mission } from './mission';
+import { AgentReport, MissionReport } from './report';
 import { Run } from './run';
 
 /**
@@ -49,6 +50,20 @@ export const ApplyRepairResponse = z.object({
   storefrontReady: z.boolean().optional(),
 });
 
+// POST /missions/fixture  -> insert one of the storefront's known scenario missions (no LLM call)
+export const FixtureMissionRequest = z.object({
+  bug: z.enum(['A', 'B', 'C', 'D', 'E', 'control']),
+  /** Defaults to the runner's STOREFRONT_URL */
+  storeUrl: z.url().optional(),
+});
+export const FixtureMissionResponse = z.object({ mission: Mission });
+
+// GET /runs/:id/report  -> the agent's report for a finished run (also served as .md)
+export const GetRunReportResponse = z.object({ report: AgentReport });
+
+// GET /missions/:id/report  -> cross-agent mission report (also served as .md)
+export const GetMissionReportResponse = z.object({ report: MissionReport });
+
 export const ErrorResponse = z.object({ error: z.string() });
 
 export type CreateMissionRequest = z.infer<typeof CreateMissionRequest>;
@@ -62,3 +77,7 @@ export type DiagnoseResponse = z.infer<typeof DiagnoseResponse>;
 export type ProposeRepairResponse = z.infer<typeof ProposeRepairResponse>;
 export type ApplyRepairResponse = z.infer<typeof ApplyRepairResponse>;
 export type ErrorResponse = z.infer<typeof ErrorResponse>;
+export type FixtureMissionRequest = z.infer<typeof FixtureMissionRequest>;
+export type FixtureMissionResponse = z.infer<typeof FixtureMissionResponse>;
+export type GetRunReportResponse = z.infer<typeof GetRunReportResponse>;
+export type GetMissionReportResponse = z.infer<typeof GetMissionReportResponse>;
