@@ -306,7 +306,11 @@ function findFailureStep(run: Run): FailureStep | undefined {
   if (runError) {
     const last = run.steps[run.steps.length - 1];
     return {
-      step: last ?? { index: 0, at: run.finishedAt ?? run.startedAt ?? run.createdAt, outcome: 'ok' },
+      step: last ?? {
+        index: 0,
+        at: run.finishedAt ?? run.startedAt ?? run.createdAt,
+        outcome: 'ok',
+      },
       outcome: runError,
       rule: 'run_error',
     };
@@ -534,7 +538,8 @@ function fmtInt(n: number): string {
 
 function fmtCost(usage: LlmUsage | undefined): string {
   if (!usage) return 'not available (no usage recorded)';
-  if (usage.estimatedCostUsd !== undefined) return `${fmtUsd(usage.estimatedCostUsd)} (${COST_NOTE})`;
+  if (usage.estimatedCostUsd !== undefined)
+    return `${fmtUsd(usage.estimatedCostUsd)} (${COST_NOTE})`;
   if (usage.calls === 0) return '$0.00 (no model calls recorded)';
   return 'not available (no price for this model)';
 }
@@ -974,8 +979,7 @@ function thesisParagraph(report: MissionReport): string {
     );
     const best = strongerPasses[0];
     if (best) {
-      const ratio =
-        alphaCost === undefined ? '' : `${ratioTo(best.c)} of ${fmtUsd(alphaCost)}`;
+      const ratio = alphaCost === undefined ? '' : `${ratioTo(best.c)} of ${fmtUsd(alphaCost)}`;
       sentences.push(
         `${best.r.agentName} could, at ${fmtUsd(best.c)} (estimated)${ratio}: that gap is the price of the store's defects.`,
       );

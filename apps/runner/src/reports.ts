@@ -5,6 +5,7 @@ import {
   buildAgentReport,
   buildMissionReport,
   generateNarrative,
+  getLlm,
   profileSummary,
   renderAgentReportMarkdown,
   renderMissionReportMarkdown,
@@ -17,6 +18,7 @@ import {
   EMPTY_USAGE,
   MissionReport,
   addUsage,
+  type AgentKind,
   type LlmUsage,
   type Mission,
   type Run,
@@ -36,8 +38,64 @@ import * as db from './db';
  */
 
 export interface GenerateRunReportOptions {
-  /** Narrator client to inject (tests pass createMockLlm); generateNarrative defaults to getLlm(). */
+  /** Narrator client to inject (tests pass createMockLlm); defaults to getLlm() under the budget below. */
   narrativeLlm?: LlmClient;
+}
+
+/** Per-attempt timeout and overall deadline for the narrator call in the runner path. */
+export const NARRATOR_TIMEOUT_MS = 15_000;
+export const NARRATOR_BUDGET_MS = 20_000;
+
+export interface NarratorBudget {
+  /** Replaces the request's own timeoutMs when that is longer. Default NARRATOR_TIMEOUT_MS. */
+  timeoutMs?: number;
+  /** The call fails after this long regardless of the adapter's retries. Default NARRATOR_BUDGET_MS. */
+  budgetMs?: number;
+}
+
+/**
+ * The narrator with a short budget. Its prose is cosmetic and the verdict is already in hand, so
+ * a run must not wait out the adapter's full retry schedule (three retries with backoff on
+ * 429/5xx/timeouts, up to a minute per attempt) before its report and terminal status can be
+ * saved. Past the deadline the attempt is abandoned (the per-request timeout ends it on its own)
+ * and generateNarrative falls back to the deterministic summary, labelled as such.
+ */
+export function withNarratorBudget(inner: LlmClient, budget: NarratorBudget = {}): LlmClient {
+  const timeoutMs = budget.timeoutMs ?? NARRATOR_TIMEOUT_MS;
+  const budgetMs = budget.budgetMs ?? NARRATOR_BUDGET_MS;
+  return {
+    provider: inner.provider,
+    complete(request) {
+      const attempt = inner.complete({
+        ...request,
+        timeoutMs: Math.min(request.timeoutMs ?? timeoutMs, timeoutMs),
+      });
+      attempt.catch(() => undefined); // an abandoned attempt's rejection is not unhandled
+      let timer: NodeJS.Timeout | undefined;
+      const deadline = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          const err = new Error(`narrator exceeded its ${budgetMs}ms budget`);
+          err.name = 'TimeoutError'; // narrativeFailureReason() reports it as "timed out"
+          reject(err);
+        }, budgetMs);
+      });
+      return Promise.race([attempt, deadline]).finally(() => clearTimeout(timer));
+    },
+  };
+}
+
+/**
+ * The runner's default narrator: getLlm() under the budget. Gamma has no narrator call, and
+ * when no provider is configured generateNarrative reaches that same error itself and falls
+ * back with the proper reason, so both cases return undefined and leave the default in place.
+ */
+function runnerNarrator(kind: AgentKind): LlmClient | undefined {
+  if (kind === 'gamma_structured') return undefined;
+  try {
+    return withNarratorBudget(getLlm());
+  } catch {
+    return undefined;
+  }
 }
 
 export interface RunReportResult {
@@ -133,7 +191,12 @@ export async function generateRunReport(
   const effort = run.agent.effort ?? AGENT_PROFILES[kind].defaultEffort;
   const profile = profileSummary(kind, model, provider, effort);
 
-  const narrative = await narrativeFor(run, mission, profile.perceives, opts.narrativeLlm);
+  const narrative = await narrativeFor(
+    run,
+    mission,
+    profile.perceives,
+    opts.narrativeLlm ?? runnerNarrator(kind),
+  );
   const usage = addUsage(runUsage(run) ?? EMPTY_USAGE, narrative.usage);
   const report = buildAgentReport({
     mission,
@@ -199,6 +262,42 @@ export async function regenerateMissionReport(
     );
     return { report, jsonPath, mdPath, relativeJsonPath: missionReportRelativePath(missionId) };
   });
+}
+
+export interface MissionReportReadOptions {
+  /** Rebuild and rewrite the files even when the stored report is current. */
+  refresh?: boolean;
+}
+
+/** A run finished after the report was generated. Both timestamps are nowIso(), so they compare as strings. */
+function missionReportIsStale(report: MissionReport, runs: Run[]): boolean {
+  return runs.some((run) => isFinished(run) && (run.finishedAt ?? '') > report.generatedAt);
+}
+
+/**
+ * The mission report for the HTTP routes: the files finishRun wrote, rebuilt only when a run has
+ * finished since they were generated or on `refresh`. A read is then a read, not a rewrite that
+ * mints a new report id, and the route and GET /artifacts/missions/<id>/report.json agree.
+ * Undefined when the mission is unknown or no run has finished yet.
+ */
+export async function currentMissionReport(
+  missionId: string,
+  opts: MissionReportReadOptions = {},
+): Promise<MissionReportResult | undefined> {
+  if (!db.getMission(missionId)) return undefined;
+  if (!opts.refresh) {
+    const report = readMissionReport(missionId);
+    const jsonPath = resolveArtifactPath(missionReportRelativePath(missionId));
+    if (report && jsonPath && !missionReportIsStale(report, db.listRuns(missionId))) {
+      return {
+        report,
+        jsonPath,
+        mdPath: jsonPath.replace(/\.json$/i, '.md'),
+        relativeJsonPath: missionReportRelativePath(missionId),
+      };
+    }
+  }
+  return regenerateMissionReport(missionId);
 }
 
 /** Absolute path of an artifacts-relative path, or undefined when it would escape the root. */

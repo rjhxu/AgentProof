@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import vm from 'node:vm';
 import type { Page } from 'playwright';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import type {
@@ -14,6 +15,7 @@ import type {
 import { hoodieMission } from '@agentproof/shared/fixtures';
 import {
   STUCK_STEP_LIMIT,
+  act,
   observe,
   runBrowserAgent,
   type AgentCallbacks,
@@ -22,6 +24,7 @@ import {
 } from './browser-agent';
 import { LlmError, createMockLlm, type MockLlmScriptEntry } from './llm';
 import type { LlmContentBlock, LlmRequest } from './llm-types';
+import { checkAction, isPaymentControl } from './policy';
 import { systemPromptFor } from './prompts';
 
 /**
@@ -87,6 +90,10 @@ interface FakeDomElement {
   textContent: string;
   value?: string;
   parent?: FakeDomElement;
+  /** DOM name for `parent`, read by the guard's ancestor walk. */
+  parentElement?: FakeDomElement;
+  /** HTMLLabelElement.control: the element a <label for=...> labels. */
+  control?: FakeDomElement;
   attrs: Record<string, string>;
   getAttribute(name: string): string | null;
   closest(selector: string): FakeDomElement | null;
@@ -97,17 +104,21 @@ function domElement(spec: {
   text: string;
   role?: string;
   ariaLabel?: string;
+  title?: string;
   value?: string;
   parent?: FakeDomElement;
+  control?: FakeDomElement;
 }): FakeDomElement {
   const attrs: Record<string, string> = {};
   if (spec.role) attrs.role = spec.role;
   if (spec.ariaLabel) attrs['aria-label'] = spec.ariaLabel;
+  if (spec.title) attrs.title = spec.title;
   const el: FakeDomElement = {
     tagName: spec.tag.toUpperCase(),
     textContent: spec.text,
     ...(spec.value === undefined ? {} : { value: spec.value }),
-    ...(spec.parent === undefined ? {} : { parent: spec.parent }),
+    ...(spec.parent === undefined ? {} : { parent: spec.parent, parentElement: spec.parent }),
+    ...(spec.control === undefined ? {} : { control: spec.control }),
     attrs,
     getAttribute: (name) => attrs[name] ?? null,
     closest(selector) {
@@ -181,6 +192,7 @@ class FakePage {
   });
   readonly screenshot = asyncFn(() => PNG);
   readonly waitForLoadState = asyncFn();
+  readonly waitForURL = asyncFn();
   readonly waitForTimeout = asyncFn();
   readonly mouse = { click: asyncFn(), wheel: asyncFn() };
   readonly keyboard = { type: asyncFn(), press: asyncFn() };
@@ -224,15 +236,18 @@ class FakePage {
   getByRole(role: string, options: { name: string; exact: boolean }): FakeLocator {
     return this.controls.get(`${role}:${options.name}`) ?? missingLocator(role, options.name);
   }
-  /** Runs the page function in-process against a fake `document`. */
+  /**
+   * Runs the page function the way Playwright does: serialised, in a context with a fake
+   * `document` and nothing from this module's scope, so a closure over a module constant fails
+   * here instead of in a real Chromium. (It cannot catch helpers that only tsx's esbuild
+   * keepNames transform injects, such as __name; the live scripted run covers those.)
+   */
   async evaluate(fn: (arg: unknown) => unknown, arg: unknown): Promise<unknown> {
-    const g = globalThis as { document?: unknown };
-    g.document = { elementFromPoint: (x: number, y: number) => this.elementAtPoint(x, y) };
-    try {
-      return fn(arg);
-    } finally {
-      delete g.document;
-    }
+    const sandbox = {
+      document: { elementFromPoint: (x: number, y: number) => this.elementAtPoint(x, y) },
+      arg,
+    };
+    return vm.runInNewContext(`(${fn.toString()})(arg)`, sandbox);
   }
   asPage(): Page {
     return this as unknown as Page;
@@ -475,7 +490,8 @@ describe('runBrowserAgent: Alpha on Bug A', () => {
     expect(product.model).toBe('grok-test');
     expect(product.effort).toBe('low');
     expect(product.jsonSchema?.name).toBe('agent_action');
-    expect(product.maxTokens).toBe(2048);
+    // No explicit cap: llm.ts picks it by effort (8192 for medium/high, which includes reasoning).
+    expect(product.maxTokens).toBeUndefined();
     expect(product.timeoutMs).toBe(120_000);
     expect(images(product)).toHaveLength(0);
     expect(texts(product)).toContain('ACCESSIBILITY TREE');
@@ -532,6 +548,97 @@ describe('runBrowserAgent: Alpha on Bug A', () => {
     expect(r.result.outcome).toBe('done');
   });
 
+  it('names a reply cut off at the token cap so the truncation is visible in the step log', async () => {
+    const r = await run('alpha_semantic', [
+      { text: '{"type":"cli', finishReason: 'max_output_tokens' },
+      done('ok'),
+    ]);
+    expect(r.steps[0]?.outcome).toBe('invalid_action');
+    expect(r.steps[0]?.outcomeDetail).toBe(
+      'model output truncated at the token cap (finishReason=max_output_tokens): no JSON action',
+    );
+    expect(r.logs[1]).toContain('truncated at the token cap');
+    expect(r.result.outcome).toBe('done');
+  });
+
+  it('refuses a select whose value names a payment control instead of clicking it', async () => {
+    // chooseOption()'s last rung is button:<value>, so without the policy this would place the order.
+    const page = new FakePage();
+    const placeOrder = presentLocator(() => page.go('/checkout/place-order'));
+    page.controls.set('button:Place order', placeOrder);
+    const r = await run(
+      'alpha_semantic',
+      [select('Order', 'Place order'), select('Size', 'button:Place order'), done('gave up')],
+      { page },
+    );
+    expect(r.steps.map((s) => s.outcome)).toEqual([
+      'rejected_by_policy',
+      'rejected_by_policy',
+      'ok',
+    ]);
+    expect(r.steps[0]?.outcomeDetail).toBe(
+      'Selecting a payment-submission control is never permitted',
+    );
+    expect(placeOrder.click).not.toHaveBeenCalled();
+    expect(placeOrder.check).not.toHaveBeenCalled();
+    expect(r.result.finalUrl).toBe(STORE); // never left the catalog page
+    expect(texts(r.llm.requests[1]!)).toContain('rejected_by_policy');
+
+    // Belt and braces: act() itself refuses, for callers that skip checkAction().
+    await expect(
+      act(
+        page.asPage(),
+        { type: 'select', target: 'Order', value: 'Place order', reason: 'test' },
+        'alpha_semantic',
+        VIEWPORT,
+      ),
+    ).rejects.toThrow('names a payment control');
+    expect(placeOrder.click).not.toHaveBeenCalled();
+  });
+
+  it('refuses a role:name click or type on a payment control', async () => {
+    const page = new FakePage();
+    const placeOrder = presentLocator();
+    page.controls.set('button:Place order', placeOrder);
+    const r = await run(
+      'alpha_semantic',
+      [click('button:Place order'), typeInto('button:Pay now', 'x'), done('gave up')],
+      { page },
+    );
+    expect(r.steps.map((s) => s.outcome)).toEqual([
+      'rejected_by_policy',
+      'rejected_by_policy',
+      'ok',
+    ]);
+    expect(r.steps[0]?.outcomeDetail).toBe(
+      'Clicking a payment-submission control is never permitted',
+    );
+    expect(r.steps[1]?.outcomeDetail).toBe(
+      'Typing into a payment-submission control is never permitted',
+    );
+    expect(placeOrder.click).not.toHaveBeenCalled();
+    expect(placeOrder.fill).not.toHaveBeenCalled();
+  });
+
+  it('flattens line breaks before typing (keyboard.type would press Enter and submit the form)', async () => {
+    const page = new FakePage();
+    const quantity = presentLocator();
+    page.controls.set('spinbutton:Quantity', quantity);
+    const r = await run(
+      'alpha_semantic',
+      [
+        typeInto('spinbutton:Quantity', '2\n'),
+        typeInto('spinbutton:Quantity', 'a\r\nb\nc'),
+        done('ok'),
+      ],
+      { page },
+    );
+    expect(r.steps.map((s) => s.outcome)).toEqual(['ok', 'ok', 'ok']);
+    expect(quantity.fill).toHaveBeenNthCalledWith(1, '2', { timeout: 5000 });
+    expect(quantity.fill).toHaveBeenNthCalledWith(2, 'a b c', { timeout: 5000 });
+    expect(page.keyboard.press).not.toHaveBeenCalledWith('Enter');
+  });
+
   it('records an act error as the first line of the message, capped', async () => {
     const r = await run('alpha_semantic', [click('button:Does not exist'), done('ok')]);
     expect(r.steps[0]?.outcome).toBe('error');
@@ -546,6 +653,7 @@ describe('runBrowserAgent: Alpha on Bug A', () => {
     expect(r.result.summary).toBe('step limit reached');
     expect(r.page.mouse.wheel).toHaveBeenCalledTimes(2);
     expect(r.page.mouse.wheel).toHaveBeenCalledWith(0, 600);
+    expect(r.page.waitForTimeout).toHaveBeenCalledTimes(2); // a settle after each scroll
     expect(texts(r.llm.requests[0]!)).toContain('STEPS REMAINING: 2');
     expect(texts(r.llm.requests[1]!)).toContain('STEPS REMAINING: 1');
 
@@ -622,6 +730,60 @@ describe('runBrowserAgent: Beta', () => {
     expect(getByRole).not.toHaveBeenCalled(); // a vision agent never resolves roles
   });
 
+  it('gives a mouse click time to commit a navigation before observing again', async () => {
+    const page = new FakePage();
+    page.elementAtPoint = () => domElement({ tag: 'div', text: 'M' });
+    // Start on the product page (its href is already normalised, as page.url() returns it).
+    const product = `${STORE}/products/black-hoodie`;
+    // First click: the URL has not changed yet, so the loop waits (bounded) for one.
+    const r = await run('beta_vision', [click('412,388'), click('713,402'), done('ok')], {
+      page,
+      mission: { ...hoodieMission, storeUrl: product },
+    });
+    expect(r.steps.map((s) => s.outcome)).toEqual(['ok', 'ok', 'ok']);
+    expect(page.waitForURL).toHaveBeenCalledTimes(2);
+    const [predicate, options] = page.waitForURL.mock.calls[0] as [
+      (u: URL) => boolean,
+      { timeout: number; waitUntil: string },
+    ];
+    expect(options).toEqual({ timeout: 1000, waitUntil: 'domcontentloaded' });
+    expect(predicate(new URL(product))).toBe(false);
+    expect(predicate(new URL(`${STORE}/cart`))).toBe(true);
+    // The wait is ordered after the click and before the settle, and a timeout is swallowed.
+    const order = [
+      page.mouse.click.mock.invocationCallOrder[0]!,
+      page.waitForURL.mock.invocationCallOrder[0]!,
+      page.waitForLoadState.mock.invocationCallOrder[0]!,
+    ];
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+
+    // A click whose navigation already committed does not wait.
+    const quick = new FakePage();
+    quick.elementAtPoint = () => domElement({ tag: 'div', text: 'M' });
+    quick.mouse.click.mockImplementationOnce(async () => quick.go('/cart'));
+    const r2 = await run('beta_vision', [click('412,388'), done('ok')], { page: quick });
+    expect(r2.steps[0]?.outcome).toBe('ok');
+    expect(quick.waitForURL).not.toHaveBeenCalled();
+    expect(r2.result.finalUrl).toBe(`${STORE}/cart`);
+
+    const slow = new FakePage();
+    slow.elementAtPoint = () => domElement({ tag: 'div', text: 'M' });
+    slow.waitForURL.mockImplementationOnce(async () => {
+      throw new Error('page.waitForURL: Timeout 1000ms exceeded.');
+    });
+    const r3 = await run('beta_vision', [click('412,388'), done('ok')], { page: slow });
+    expect(r3.steps[0]?.outcome).toBe('ok');
+  });
+
+  it('types by coordinate without line breaks', async () => {
+    const page = new FakePage();
+    page.elementAtPoint = () => domElement({ tag: 'input', text: '' });
+    const r = await run('beta_vision', [typeInto('300,500', '2\n'), done('ok')], { page });
+    expect(r.steps[0]?.outcome).toBe('ok');
+    expect(page.keyboard.type).toHaveBeenCalledWith('2');
+    expect(page.keyboard.press).toHaveBeenCalledTimes(1); // only the select-all
+  });
+
   it('refuses a coordinate click that would land on a payment control', async () => {
     const page = new FakePage();
     const button = domElement({ tag: 'button', text: ' Place order ' });
@@ -653,6 +815,59 @@ describe('runBrowserAgent: Beta', () => {
     const rejected = await run('beta_vision', [click('100,100'), done('ok')], { page: labelled });
     expect(rejected.steps[0]?.outcome).toBe('rejected_by_policy');
     expect(rejected.steps[0]?.outcomeDetail).toContain('"Pay now"');
+  });
+
+  it('catches a role-less div button hit on its text-less icon child, but not a page wrapper', async () => {
+    const divButton = domElement({ tag: 'div', text: 'Place order' });
+    const icon = new FakePage();
+    icon.elementAtPoint = () => domElement({ tag: 'span', text: '', parent: divButton });
+    const r = await run('beta_vision', [click('193,405'), done('ok')], { page: icon });
+    expect(r.steps[0]?.outcome).toBe('rejected_by_policy');
+    expect(r.steps[0]?.outcomeDetail).toBe(
+      'coordinate click would hit a payment control: "Place order"',
+    );
+    expect(icon.mouse.click).not.toHaveBeenCalled();
+
+    // Two levels up (icon -> inner span -> div button) is still caught.
+    const inner = domElement({ tag: 'span', text: '', parent: divButton });
+    const nested = new FakePage();
+    nested.elementAtPoint = () => domElement({ tag: 'svg', text: '', parent: inner });
+    const r2 = await run('beta_vision', [click('193,405'), done('ok')], { page: nested });
+    expect(r2.steps[0]?.outcome).toBe('rejected_by_policy');
+
+    // A wrapper with long text that happens to contain "Place order" is not a button.
+    const wrapper = domElement({
+      tag: 'div',
+      text: `Review your order. ${'Lorem ipsum dolor sit amet, consectetur adipiscing elit. '.repeat(2)}Place order`,
+    });
+    const spacer = new FakePage();
+    spacer.elementAtPoint = () => domElement({ tag: 'span', text: '', parent: wrapper });
+    const r3 = await run('beta_vision', [click('50,50'), done('ok')], { page: spacer });
+    expect(r3.steps[0]?.outcome).toBe('ok');
+    expect(spacer.mouse.click).toHaveBeenCalledWith(50, 50);
+
+    // The walk stops at a non-generic or role-bearing ancestor.
+    const region = domElement({ tag: 'section', role: 'region', text: 'Place order' });
+    const inRegion = new FakePage();
+    inRegion.elementAtPoint = () => domElement({ tag: 'span', text: '', parent: region });
+    const r4 = await run('beta_vision', [click('50,50'), done('ok')], { page: inRegion });
+    expect(r4.steps[0]?.outcome).toBe('ok');
+  });
+
+  it('judges a label by the control it labels too, and reads a lone "Pay" once', async () => {
+    const submit = domElement({ tag: 'input', text: '', value: 'Place order' });
+    const labelled = new FakePage();
+    labelled.elementAtPoint = () => domElement({ tag: 'label', text: 'Finish', control: submit });
+    const r = await run('beta_vision', [click('100,100'), done('ok')], { page: labelled });
+    expect(r.steps[0]?.outcome).toBe('rejected_by_policy');
+    expect(r.steps[0]?.outcomeDetail).toContain('"Finish Place order"');
+
+    // textContent and title both "Pay": deduplicated so the anchored pattern still matches.
+    const pay = new FakePage();
+    pay.elementAtPoint = () => domElement({ tag: 'button', text: 'Pay', title: 'Pay' });
+    const r2 = await run('beta_vision', [click('100,100'), done('ok')], { page: pay });
+    expect(r2.steps[0]?.outcome).toBe('rejected_by_policy');
+    expect(r2.steps[0]?.outcomeDetail).toContain('"Pay"');
   });
 
   it('rejects select for a vision agent as an invalid action', async () => {
@@ -723,15 +938,26 @@ describe('runBrowserAgent: guards and errors', () => {
     ]);
     expect(r.result.outcome).toBe('error');
     expect(r.result.summary).toBe('xai 500 after 3 retries');
-    expect(r.steps).toHaveLength(0);
     expect(r.browser.close).toHaveBeenCalledTimes(1);
     expect(r.tracing.stop).toHaveBeenCalledTimes(1);
     expect(r.result.tracePath).toBe(`${RUN_ID}/trace.zip`);
     expect(r.result.finalUrl).toBe(STORE);
     expect(r.result.cookies).toHaveLength(1);
     expect(r.logs).toContain('error: xai 500 after 3 retries');
-    // The evidence captured before the failing decide() is still there.
+    // The evidence captured before the failing decide() is referenced by an error step, not orphaned.
     expect(r.evidence.map((e) => e.kind)).toEqual(['screenshot', 'dom_snapshot', 'trace']);
+    expect(r.steps).toHaveLength(1);
+    expect(r.result.stepsUsed).toBe(1);
+    const step = r.steps[0]!;
+    expect(step.outcome).toBe('error');
+    expect(step.outcomeDetail).toBe('xai 500 after 3 retries');
+    expect(step.action).toBeUndefined();
+    expect(step.usage).toBeUndefined();
+    expect(step.screenshotEvidenceId).toBe(r.evidence[0]?.id);
+    expect(step.snapshotEvidenceId).toBe(r.evidence[1]?.id);
+    expect(step.durationMs).toBeGreaterThan(0);
+    expect(r.logs).toContain('#0 (no action) -> error: xai 500 after 3 retries');
+    expect(r.result.usage.calls).toBe(0);
   });
 
   it('turns a browser failure into outcome error', async () => {
@@ -763,6 +989,68 @@ describe('runBrowserAgent: guards and errors', () => {
     );
     expect(result.outcome).toBe('done');
     expect(logs).toContain('browser close failed: Target closed');
+  });
+});
+
+describe('policy: payment controls', () => {
+  it.each([
+    'Place order',
+    ' place  order ',
+    'button:Place order',
+    'Pay now',
+    'Submit payment',
+    'Confirm purchase',
+    'Buy now',
+    'Complete order',
+    'Complete purchase',
+    'Confirm order',
+    'Submit order',
+    'Pay',
+    'button:Pay',
+    'Pay $49.00',
+    'Pay 49.00 USD',
+  ])('refuses %j', (text) => {
+    expect(isPaymentControl(text)).toBe(true);
+  });
+
+  it.each([
+    'Add to cart',
+    'Proceed to checkout',
+    'Payment methods',
+    'Order history',
+    'Order summary',
+    'link:Checkout',
+    'Review your order',
+    '',
+  ])('allows %j', (text) => {
+    expect(isPaymentControl(text)).toBe(false);
+  });
+
+  it('screens click and type targets and both halves of a select', () => {
+    const m = hoodieMission;
+    expect(checkAction(m, { type: 'click', target: 'button:Add to cart', reason: 'r' }, 0)).toEqual(
+      {
+        ok: true,
+      },
+    );
+    expect(checkAction(m, { type: 'click', target: 'button:Place order', reason: 'r' }, 0)).toEqual(
+      {
+        ok: false,
+        reason: 'Clicking a payment-submission control is never permitted',
+      },
+    );
+    expect(
+      checkAction(m, { type: 'type', target: 'textbox:Pay now', text: 'x', reason: 'r' }, 0),
+    ).toEqual({ ok: false, reason: 'Typing into a payment-submission control is never permitted' });
+    expect(checkAction(m, { type: 'select', target: 'Size', value: 'M', reason: 'r' }, 0)).toEqual({
+      ok: true,
+    });
+    expect(
+      checkAction(m, { type: 'select', target: 'Order', value: 'Place order', reason: 'r' }, 0),
+    ).toEqual({ ok: false, reason: 'Selecting a payment-submission control is never permitted' });
+    expect(
+      checkAction(m, { type: 'select', target: 'Place order', value: 'Yes', reason: 'r' }, 0),
+    ).toEqual({ ok: false, reason: 'Selecting a payment-submission control is never permitted' });
   });
 });
 

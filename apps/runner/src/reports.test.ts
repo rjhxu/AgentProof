@@ -10,7 +10,7 @@ import {
   type Run,
 } from '@agentproof/shared';
 import { alphaFailedRun, hoodieMission } from '@agentproof/shared/fixtures';
-import { createMockLlm } from '@agentproof/agent';
+import { createMockLlm, type LlmClient, type LlmRequest } from '@agentproof/agent';
 
 // The data dir is read from the environment when config loads, so it is chosen before the
 // runner modules are imported. Each vitest file has its own module graph, so this is per file.
@@ -233,6 +233,87 @@ describe('generateRunReport', () => {
     expect(result.report.narrative).toMatch(/^Narrative unavailable/);
     expect(result.narrativeUsage.calls).toBe(0);
     expect(result.report.usage.calls).toBe(ALPHA_USAGE.calls);
+  });
+});
+
+describe('withNarratorBudget', () => {
+  const request: LlmRequest = { model: 'narrator', system: 'sys', messages: [], timeoutMs: 60_000 };
+
+  it('caps the per-request timeout and gives up at the deadline; the report keeps the deterministic summary', async () => {
+    const seen: LlmRequest[] = [];
+    const hanging: LlmClient = {
+      provider: 'mock',
+      complete: (req) => {
+        seen.push(req);
+        return new Promise(() => undefined); // a provider that never answers
+      },
+    };
+    const client = reports.withNarratorBudget(hanging, { timeoutMs: 1_000, budgetMs: 25 });
+    await expect(client.complete(request)).rejects.toMatchObject({ name: 'TimeoutError' });
+    expect(seen[0]?.timeoutMs).toBe(1_000);
+
+    const mission = missionWithId('mis_reports_budget');
+    db.saveMission(mission);
+    const run = alphaRun('run_reports_budget', mission.id);
+    db.saveRun(run);
+    const result = await reports.generateRunReport(run, mission, { narrativeLlm: client });
+    expect(result.report.narrative).toMatch(/^Narrative unavailable \(timed out\)/);
+    expect(result.report.narrative).toContain('Agent Alpha');
+    expect(result.narrativeUsage.calls).toBe(0);
+  });
+
+  it('passes a prompt answer through with the default timeout applied', async () => {
+    const quick = narrator();
+    const client = reports.withNarratorBudget(quick);
+    const response = await client.complete(request);
+    expect(response.text).toBe(NARRATIVE);
+    expect(client.provider).toBe('mock');
+    expect(quick.requests[0]?.timeoutMs).toBe(reports.NARRATOR_TIMEOUT_MS);
+  });
+});
+
+describe('currentMissionReport', () => {
+  it('serves the stored report until a run finishes after it, and rebuilds on refresh', async () => {
+    expect(await reports.currentMissionReport('mis_nope')).toBeUndefined();
+    const mission = missionWithId('mis_reports_current');
+    db.saveMission(mission);
+    expect(await reports.currentMissionReport(mission.id)).toBeUndefined();
+
+    const alpha = alphaRun('run_reports_cur_alpha', mission.id);
+    const alphaReport = await reports.generateRunReport(alpha, mission, {
+      narrativeLlm: narrator(),
+    });
+    db.saveRun({ ...alpha, reportPath: alphaReport.relativeJsonPath });
+
+    const first = await reports.currentMissionReport(mission.id); // no file yet: builds it
+    expect(first?.report.runs.map((r) => r.agentKind)).toEqual(['alpha_semantic']);
+    const second = await reports.currentMissionReport(mission.id); // a read, not a rewrite
+    expect(second?.report.id).toBe(first!.report.id);
+    expect(second?.jsonPath).toBe(first!.jsonPath);
+    expect(second?.mdPath).toBe(first!.mdPath);
+    expect(second?.relativeJsonPath).toBe(`missions/${mission.id}/report.json`);
+    expect(reports.readMissionReport(mission.id)?.id).toBe(first!.report.id);
+
+    // A run that finished after the report was generated makes it stale.
+    const sigma: Run = {
+      ...sigmaPassedRun('run_reports_cur_sigma', mission.id),
+      finishedAt: new Date(Date.parse(first!.report.generatedAt) + 1).toISOString(),
+    };
+    const sigmaReport = await reports.generateRunReport(sigma, mission, {
+      narrativeLlm: narrator(),
+    });
+    db.saveRun({ ...sigma, reportPath: sigmaReport.relativeJsonPath });
+    const third = await reports.currentMissionReport(mission.id);
+    expect(third?.report.id).not.toBe(first!.report.id);
+    expect(third?.report.runs.map((r) => r.agentKind).sort()).toEqual([
+      'alpha_semantic',
+      'sigma_hybrid',
+    ]);
+    expect((await reports.currentMissionReport(mission.id))?.report.id).toBe(third!.report.id);
+
+    const refreshed = await reports.currentMissionReport(mission.id, { refresh: true });
+    expect(refreshed?.report.id).not.toBe(third!.report.id);
+    expect(reports.readMissionReport(mission.id)?.id).toBe(refreshed!.report.id);
   });
 });
 

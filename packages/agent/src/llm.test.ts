@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgentActionDraft, MissionDraft } from '@agentproof/shared';
 import {
+  type AnthropicBetaMessagesApi,
   LlmError,
+  createAnthropicClient,
   createLlmFromEnv,
   createMockLlm,
   createXaiClient,
@@ -324,6 +326,80 @@ describe('createXaiClient (responses mode)', () => {
     await expect(client.complete(visionRequest)).rejects.toThrow(/refused/);
   });
 
+  it('defaults the output cap to 8192 for medium and high effort, 4096 otherwise', async () => {
+    const { calls, fetchImpl } = fetchScript([() => jsonResponse(RESPONSES_FIXTURE)]);
+    const client = createXaiClient({ apiKey: API_KEY, fetchImpl, sleep: zeroSleep });
+    await client.complete({ ...visionRequest, effort: 'medium' });
+    await client.complete({ ...visionRequest, effort: 'high' });
+    await client.complete({ ...visionRequest, effort: undefined });
+    // A non-reasoning model has no reasoning tokens sharing the budget, so no raise either.
+    await client.complete({
+      ...visionRequest,
+      model: 'grok-4.20-0309-non-reasoning',
+      effort: 'high',
+    });
+    await client.complete({ ...visionRequest, effort: 'high', maxTokens: 1000 });
+    expect(calls.map((c) => bodyOf(c).max_output_tokens)).toEqual([8192, 8192, 4096, 4096, 1000]);
+  });
+
+  /** A 200 whose body stream dies mid-read: what a dropped connection looks like to fetch. */
+  const droppedBody = () =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.error(new TypeError('terminated'));
+        },
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    );
+
+  it('retries when the connection drops while the body is being read', async () => {
+    const { calls, fetchImpl } = fetchScript([droppedBody, jsonResponse(RESPONSES_FIXTURE)]);
+    const client = createXaiClient({ apiKey: API_KEY, fetchImpl, sleep: zeroSleep });
+    const res = await client.complete(visionRequest);
+    expect(res.json).toEqual({ type: 'click', reason: 'go' });
+    expect(calls).toHaveLength(2);
+    expect(zeroSleep).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports a persistent body drop as retryable, not as a non-JSON body', async () => {
+    const { calls, fetchImpl } = fetchScript([droppedBody]);
+    const client = createXaiClient({
+      apiKey: API_KEY,
+      fetchImpl,
+      sleep: zeroSleep,
+      maxRetries: 1,
+    });
+    const err = await client.complete(visionRequest).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(LlmError);
+    expect((err as LlmError).retryable).toBe(true);
+    expect((err as LlmError).status).toBeUndefined();
+    expect((err as LlmError).message).not.toContain('non-JSON');
+    expect(calls).toHaveLength(2);
+  });
+
+  it('never puts image data in the error body excerpt', async () => {
+    const echoed = {
+      error: {
+        message: `invalid image: data:image/png;base64,${PNG_BASE64} and raw ${'A'.repeat(400)}`,
+      },
+    };
+    const { fetchImpl } = fetchScript([jsonResponse(echoed, 400)]);
+    const client = createXaiClient({ apiKey: API_KEY, fetchImpl, sleep: zeroSleep });
+    const err = await client.complete(visionRequest).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(LlmError);
+    const llmErr = err as LlmError;
+    expect(llmErr.bodyExcerpt).toContain('invalid image');
+    expect(llmErr.bodyExcerpt).toContain('[image]');
+    expect(llmErr.bodyExcerpt).toContain('[base64]');
+    for (const field of [llmErr.bodyExcerpt ?? '', llmErr.message]) {
+      expect(field).not.toContain('data:image');
+      expect(field).not.toContain(PNG_BASE64.slice(0, 40));
+      expect(field).not.toContain('A'.repeat(100));
+    }
+    expect(llmErr.bodyExcerpt!.length).toBeLessThanOrEqual(300);
+  });
+
   it('respects a custom base URL', async () => {
     const { calls, fetchImpl } = fetchScript([jsonResponse(RESPONSES_FIXTURE)]);
     const client = createXaiClient({
@@ -396,11 +472,174 @@ describe('createXaiClient (chat mode)', () => {
   });
 });
 
+describe('createAnthropicClient', () => {
+  type BetaCreate = AnthropicBetaMessagesApi['beta']['messages']['create'];
+  type BetaMessage = Awaited<ReturnType<BetaCreate>>;
+  type CreateParams = Parameters<BetaCreate>[0];
+  type CreateOptions = Parameters<BetaCreate>[1];
+
+  /** What the Messages API returns; only the fields the adapter reads. */
+  const ANTHROPIC_FIXTURE = {
+    id: 'msg_01',
+    type: 'message',
+    role: 'assistant',
+    model: 'claude-haiku-5-5',
+    content: [{ type: 'text', text: '{"type":"click","reason":"go"}', citations: null }],
+    stop_reason: 'end_turn',
+    stop_sequence: null,
+    usage: {
+      input_tokens: 1000,
+      output_tokens: 50,
+      cache_read_input_tokens: 200,
+      cache_creation_input_tokens: 0,
+    },
+  };
+  const fixtureMessage = (): BetaMessage =>
+    structuredClone(ANTHROPIC_FIXTURE) as unknown as BetaMessage;
+
+  /** A fake SDK client with both Messages resources, so the test can see which one was used. */
+  function fakeSdk(impl: (params: CreateParams, options?: CreateOptions) => Promise<BetaMessage>) {
+    const beta = vi.fn(impl);
+    const nonBeta = vi.fn(async () => fixtureMessage());
+    const client = { beta: { messages: { create: beta } }, messages: { create: nonBeta } };
+    return { client, beta, nonBeta };
+  }
+
+  const claudeRequest: LlmRequest = { ...visionRequest, model: 'claude-haiku-5-5' };
+
+  it('sends betas and fallbacks only through the beta Messages resource', async () => {
+    const { client, beta, nonBeta } = fakeSdk(async () => fixtureMessage());
+    const llm = createAnthropicClient({ apiKey: 'sk-ant-test', client });
+    expect(llm.provider).toBe('anthropic');
+
+    const res = await llm.complete({ ...claudeRequest, effort: 'high', timeoutMs: 5000 });
+
+    expect(nonBeta).not.toHaveBeenCalled();
+    expect(beta).toHaveBeenCalledTimes(1);
+    const [params, options] = beta.mock.calls[0]!;
+    expect(params.betas).toEqual(['server-side-fallback-2026-07-01']);
+    expect(params.fallbacks).toBe('default');
+    expect(params.model).toBe('claude-haiku-5-5');
+    expect(params.max_tokens).toBe(8192); // high effort: thinking shares the cap
+    expect(params.system).toBe('You are a test agent.');
+    expect(params.temperature).toBe(0.2);
+    expect(params.output_config).toEqual({
+      effort: 'high',
+      format: { type: 'json_schema', schema: visionRequest.jsonSchema!.schema },
+    });
+    expect(params.messages).toEqual([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Mission JSON here' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: PNG_BASE64 } },
+        ],
+      },
+    ]);
+    expect(options).toEqual({ timeout: 5000 });
+
+    expect(res.provider).toBe('anthropic');
+    expect(res.model).toBe('claude-haiku-5-5');
+    expect(res.text).toBe('{"type":"click","reason":"go"}');
+    expect(res.json).toEqual({ type: 'click', reason: 'go' });
+    expect(res.finishReason).toBe('end_turn');
+    expect(res.usage.calls).toBe(1);
+    expect(res.usage.inputTokens).toBe(1200); // input + cache read + cache creation
+    expect(res.usage.cachedInputTokens).toBe(200);
+    expect(res.usage.outputTokens).toBe(50);
+    expect(res.usage.imageInputs).toBe(1);
+    // haiku 5.5: 1000 fresh * 0.1 + 200 cached * 0.01 + 50 out * 0.5 = 127 per 1M tokens
+    expect(res.usage.estimatedCostUsd).toBeCloseTo(0.000127, 10);
+  });
+
+  it('maps a refusal and a thrown abort to LlmError', async () => {
+    const refused = fakeSdk(async () => ({ ...fixtureMessage(), stop_reason: 'refusal' as const }));
+    await expect(
+      createAnthropicClient({ apiKey: 'sk-ant-test', client: refused.client }).complete(
+        claudeRequest,
+      ),
+    ).rejects.toThrow(/refused/);
+
+    const aborted = fakeSdk(async () => {
+      throw Object.assign(new Error('aborted'), { name: 'AbortError' });
+    });
+    const err = await createAnthropicClient({ apiKey: 'sk-ant-test', client: aborted.client })
+      .complete(claudeRequest)
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(LlmError);
+    expect((err as LlmError).provider).toBe('anthropic');
+    expect((err as LlmError).retryable).toBe(true);
+  });
+
+  it('posts fallbacks in the body and betas in the header through the real SDK', async () => {
+    const { calls, fetchImpl } = fetchScript([jsonResponse(ANTHROPIC_FIXTURE)]);
+    const llm = createAnthropicClient({ apiKey: 'sk-ant-test-key', fetchImpl, maxRetries: 0 });
+    const res = await llm.complete(claudeRequest);
+
+    expect(calls).toHaveLength(1);
+    const call = calls[0]!;
+    expect(call.url).toMatch(/\/v1\/messages\?beta=true$/);
+    const headers = new Headers(call.init.headers);
+    expect(headers.get('anthropic-beta')?.split(',')).toContain('server-side-fallback-2026-07-01');
+    expect(headers.get('x-api-key')).toBe('sk-ant-test-key');
+    const body = bodyOf(call);
+    expect(body.fallbacks).toBe('default');
+    expect(body).not.toHaveProperty('betas'); // moved into the header, never a body field
+    expect(body.model).toBe('claude-haiku-5-5');
+    expect(body.max_tokens).toBe(4096);
+    expect(body.output_config.effort).toBe('low');
+    expect(body.output_config.format.type).toBe('json_schema');
+    expect(body.messages[0].content[1].source.data).toBe(PNG_BASE64);
+
+    expect(res.json).toEqual({ type: 'click', reason: 'go' });
+    expect(res.usage.inputTokens).toBe(1200);
+  });
+
+  it('classifies SDK connection errors as retryable and strips image data from 400s', async () => {
+    const network = fetchScript([new TypeError('fetch failed')]);
+    const dropped = createAnthropicClient({
+      apiKey: 'sk-ant-test',
+      fetchImpl: network.fetchImpl,
+      maxRetries: 0,
+    });
+    const errA = await dropped.complete(claudeRequest).catch((e: unknown) => e);
+    expect(errA).toBeInstanceOf(LlmError);
+    expect((errA as LlmError).retryable).toBe(true);
+    expect((errA as LlmError).status).toBeUndefined();
+
+    const echoed = fetchScript([
+      jsonResponse(
+        {
+          type: 'error',
+          error: {
+            type: 'invalid_request_error',
+            message: `bad image data:image/png;base64,${PNG_BASE64}`,
+          },
+        },
+        400,
+      ),
+    ]);
+    const rejected = createAnthropicClient({
+      apiKey: 'sk-ant-test',
+      fetchImpl: echoed.fetchImpl,
+      maxRetries: 0,
+    });
+    const errB = await rejected.complete(claudeRequest).catch((e: unknown) => e);
+    expect(errB).toBeInstanceOf(LlmError);
+    const llmErr = errB as LlmError;
+    expect(llmErr.status).toBe(400);
+    expect(llmErr.retryable).toBe(false);
+    expect(llmErr.bodyExcerpt).toContain('bad image');
+    expect(llmErr.bodyExcerpt).not.toContain('data:image');
+    expect(llmErr.message).not.toContain(PNG_BASE64.slice(0, 40));
+  });
+});
+
 describe('createMockLlm', () => {
   it('returns scripted responses in order, loops the last one, and records requests', async () => {
     const mock = createMockLlm([
       { text: 'first' },
-      (req) => ({ json: { echo: req.model }, usage: { inputTokens: 7 } as never }),
+      (req) => ({ json: { echo: req.model }, usage: { inputTokens: 7 } }),
     ]);
     expect(mock.provider).toBe('mock');
     const req: LlmRequest = {
@@ -428,6 +667,10 @@ describe('createMockLlm', () => {
     expect(second.json).toEqual({ echo: 'grok-4.3' });
     expect(second.text).toBe('{"echo":"grok-4.3"}');
     expect(second.usage.inputTokens).toBe(7);
+    // a partial usage is completed with the defaults, including the images actually sent
+    expect(second.usage.calls).toBe(1);
+    expect(second.usage.outputTokens).toBe(0);
+    expect(second.usage.imageInputs).toBe(1);
 
     const third = await mock.complete(req);
     expect(third.json).toEqual({ echo: 'grok-4.3' });

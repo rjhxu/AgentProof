@@ -27,12 +27,14 @@ import { estimateCostUsd } from './profiles';
  */
 
 /**
- * Default output cap. In xAI Responses mode `max_output_tokens` bounds reasoning tokens as well
- * as the visible reply, so a medium/high-effort step whose thinking alone exceeds the cap comes
- * back incomplete with a truncated (unparseable) JSON body. Callers running those efforts should
- * pass a higher `maxTokens` (8192+); the mission generator does.
+ * Default output caps. In xAI Responses mode `max_output_tokens` bounds reasoning tokens as well
+ * as the visible reply (Anthropic's `max_tokens` includes thinking the same way), so a
+ * medium/high-effort step whose thinking alone exceeds a 4096 cap comes back incomplete with a
+ * truncated (unparseable) JSON body. Those efforts default to 8192; an explicit `maxTokens`
+ * always wins. See maxTokensFor().
  */
 const DEFAULT_MAX_TOKENS = 4096;
+const DEFAULT_MAX_TOKENS_REASONING = 8192;
 const DEFAULT_TIMEOUT_MS = 90_000;
 const DEFAULT_MAX_RETRIES = 3;
 const BODY_EXCERPT_CHARS = 300;
@@ -129,6 +131,15 @@ function effortFor(req: LlmRequest): LlmEffort | undefined {
   return req.model.includes('non-reasoning') ? undefined : req.effort;
 }
 
+/** Output cap for a request: the explicit value, else the default for its effective effort. */
+function maxTokensFor(req: LlmRequest): number {
+  if (req.maxTokens !== undefined) return req.maxTokens;
+  const effort = effortFor(req);
+  return effort === 'medium' || effort === 'high'
+    ? DEFAULT_MAX_TOKENS_REASONING
+    : DEFAULT_MAX_TOKENS;
+}
+
 /** The parsed JSON of a structured-output reply, or undefined when it is not a JSON object/array. */
 function parseJsonText(text: string): unknown {
   try {
@@ -205,7 +216,7 @@ function debugTruncated(
   if (finishReason === undefined || !TRUNCATED_FINISH_REASONS.has(finishReason)) return;
   console.error(
     `[llm] ${label} model=${req.model} structured reply truncated at ` +
-      `maxTokens=${req.maxTokens ?? DEFAULT_MAX_TOKENS} (finishReason=${finishReason}); ` +
+      `maxTokens=${maxTokensFor(req)} (finishReason=${finishReason}); ` +
       'the cap includes reasoning tokens, raise maxTokens for medium/high effort',
   );
 }
@@ -307,7 +318,7 @@ function buildResponsesBody(req: LlmRequest, detail: 'low' | 'high'): JsonObject
     model: req.model,
     store: false,
     input,
-    max_output_tokens: req.maxTokens ?? DEFAULT_MAX_TOKENS,
+    max_output_tokens: maxTokensFor(req),
     ...(effort === undefined ? {} : { reasoning: { effort } }),
     ...(req.temperature === undefined ? {} : { temperature: req.temperature }),
     ...(req.jsonSchema === undefined
@@ -345,7 +356,7 @@ function buildChatBody(req: LlmRequest, detail: 'low' | 'high'): JsonObject {
   return {
     model: req.model,
     messages,
-    max_completion_tokens: req.maxTokens ?? DEFAULT_MAX_TOKENS,
+    max_completion_tokens: maxTokensFor(req),
     ...(effort === undefined ? {} : { reasoning_effort: effort }),
     ...(req.temperature === undefined ? {} : { temperature: req.temperature }),
     ...(req.jsonSchema === undefined
@@ -569,12 +580,30 @@ export function createXaiClient(opts: XaiClientOptions): LlmClient {
 // Anthropic (fallback provider)
 // ---------------------------------------------------------------------------------------------
 
+/**
+ * The slice of the SDK client the adapter calls. Only the beta Messages resource declares
+ * `betas` and `fallbacks` in its params (it moves `betas` into the anthropic-beta header and
+ * posts `fallbacks` in the body); tests inject a fake here to pin that.
+ */
+export interface AnthropicBetaMessagesApi {
+  beta: {
+    messages: {
+      create(
+        params: Anthropic.Beta.Messages.MessageCreateParamsNonStreaming,
+        options?: { timeout?: number },
+      ): Promise<Anthropic.Beta.Messages.BetaMessage>;
+    };
+  };
+}
+
 export interface AnthropicClientOptions {
   apiKey: string;
   baseUrl?: string;
   maxRetries?: number;
   /** Injectable for tests; forwarded to the SDK's own `fetch` option. */
   fetchImpl?: typeof fetch;
+  /** Injectable for tests: replaces the SDK client, so baseUrl/maxRetries/fetchImpl are unused. */
+  client?: AnthropicBetaMessagesApi;
 }
 
 function toAnthropicBlock(block: LlmContentBlock): Anthropic.Beta.Messages.BetaContentBlockParam {
@@ -595,7 +624,10 @@ function toAnthropicError(err: unknown): LlmError {
         provider: 'anthropic',
         ...(status === undefined ? {} : { status }),
         bodyExcerpt: excerpt(err.message, ''),
-        retryable: status === 429 || (status ?? 0) >= 500,
+        // APIConnectionError covers network drops and timeouts, including while the body is
+        // read; the SDK already retried them, so the caller may retry again later.
+        retryable:
+          err instanceof Anthropic.APIConnectionError || status === 429 || (status ?? 0) >= 500,
         cause: err,
       },
     );
@@ -610,12 +642,14 @@ function toAnthropicError(err: unknown): LlmError {
 export function createAnthropicClient(opts: AnthropicClientOptions): LlmClient {
   const apiKey = opts.apiKey.trim();
   if (!apiKey) throw new LlmError('Anthropic API key is empty', { provider: 'anthropic' });
-  const client = new Anthropic({
-    apiKey,
-    maxRetries: opts.maxRetries ?? DEFAULT_MAX_RETRIES,
-    ...(opts.baseUrl ? { baseURL: opts.baseUrl } : {}),
-    ...(opts.fetchImpl ? { fetch: opts.fetchImpl } : {}),
-  });
+  const client: AnthropicBetaMessagesApi =
+    opts.client ??
+    new Anthropic({
+      apiKey,
+      maxRetries: opts.maxRetries ?? DEFAULT_MAX_RETRIES,
+      ...(opts.baseUrl ? { baseURL: opts.baseUrl } : {}),
+      ...(opts.fetchImpl ? { fetch: opts.fetchImpl } : {}),
+    });
 
   async function complete(req: LlmRequest): Promise<LlmResponse> {
     const blocks = countBlocks(req.messages);
@@ -634,7 +668,7 @@ export function createAnthropicClient(opts: AnthropicClientOptions): LlmClient {
     // as unknown body fields and the API would reject every request with a 400.
     const params: Anthropic.Beta.Messages.MessageCreateParamsNonStreaming = {
       model: req.model,
-      max_tokens: req.maxTokens ?? DEFAULT_MAX_TOKENS,
+      max_tokens: maxTokensFor(req),
       system: req.system,
       messages,
       betas: [...FALLBACKS.betas],
@@ -701,8 +735,7 @@ export type MockLlmPartialResponse = Omit<Partial<LlmResponse>, 'usage'> & {
 };
 
 export type MockLlmScriptEntry =
-  | MockLlmPartialResponse
-  | ((req: LlmRequest) => MockLlmPartialResponse);
+  MockLlmPartialResponse | ((req: LlmRequest) => MockLlmPartialResponse);
 
 export interface MockLlmClient extends LlmClient {
   provider: 'mock';

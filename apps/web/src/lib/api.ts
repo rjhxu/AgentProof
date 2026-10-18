@@ -86,11 +86,20 @@ export const api = {
       body: JSON.stringify(body),
     }),
   getMission: (missionId: string) => call<GetMissionResponse>(`/missions/${missionId}`),
-  /** 404 ("report not ready") until the run has a verdict and jobs.ts has written its report. */
+  /**
+   * 404 ("report not ready") while the run is in progress. jobs.ts saves the terminal status and
+   * reportPath together, so a run that polls as passed/failed/error has its report unless
+   * writing it failed (then the run carries the verdict and the log says why).
+   */
   getRunReport: (runId: string) => call<GetRunReportResponse>(`/runs/${runId}/report`),
-  /** Rebuilt on every call from the mission's finished runs; 404 until one has finished. */
-  getMissionReport: (missionId: string) =>
-    call<GetMissionReportResponse>(`/missions/${missionId}/report`),
+  /**
+   * The report written when the mission's last run finished (same id as the report.json
+   * artifact); 404 until one has finished. `refresh` forces a rebuild from the mission's runs.
+   */
+  getMissionReport: (missionId: string, opts: { refresh?: boolean } = {}) =>
+    call<GetMissionReportResponse>(
+      `/missions/${missionId}/report${opts.refresh ? '?refresh=1' : ''}`,
+    ),
   /** text/markdown rendering of the same run report, for "open as Markdown" links. */
   runReportMarkdownUrl: (runId: string) => `${BASE}/runs/${runId}/report.md`,
   missionReportMarkdownUrl: (missionId: string) => `${BASE}/missions/${missionId}/report.md`,
@@ -103,7 +112,11 @@ export const api = {
       .map(encodeURIComponent)
       .join('/')}`,
 
-  /** Subscribe to live run events. Returns an unsubscribe function. Browser only. */
+  /**
+   * Subscribe to live run events. Returns an unsubscribe function. Browser only. The runner ends
+   * the stream after the terminal status (at once for a run that has already finished), which
+   * EventSource reports through onerror, so the source is closed rather than left reconnecting.
+   */
   subscribe(runId: string, onEvent: (e: RunEvent) => void): () => void {
     const es = new EventSource(`${BASE}/runs/${runId}/events`);
     es.onmessage = (msg) => onEvent(JSON.parse(msg.data) as RunEvent);

@@ -10,6 +10,7 @@ import {
   FixtureMissionRequest,
   StartRunsRequest,
   type Run,
+  type RunStatus,
   newId,
   nowIso,
 } from '@agentproof/shared';
@@ -21,14 +22,61 @@ import { hoodieMission } from '@agentproof/shared/fixtures';
 import { diagnoseGamma, proposeGammaRepair, applyGammaRepair } from './gamma-demo';
 import { registerRepositoryRoutes } from './repository-routes';
 import {
+  currentMissionReport,
   missionReportExists,
   missionReportRelativePath,
   readRunReport,
   readRunReportMarkdown,
-  regenerateMissionReport,
 } from './reports';
 
 const MARKDOWN = 'text/markdown; charset=utf-8';
+
+const TERMINAL_STATUSES: ReadonlySet<RunStatus> = new Set([
+  'passed',
+  'failed',
+  'error',
+  'cancelled',
+]);
+
+/** A run in this status will publish no further events. */
+export function isTerminalStatus(status: RunStatus): boolean {
+  return TERMINAL_STATUSES.has(status);
+}
+
+/**
+ * HTTP status of a thrown error. Fastify and its plugins carry it on `statusCode` (the http-errors
+ * that @fastify/static forwards also on `status`); anything else is a 500.
+ */
+export function errorStatus(err: unknown): number {
+  if (typeof err === 'object' && err !== null) {
+    for (const key of ['statusCode', 'status'] as const) {
+      const value = (err as Record<string, unknown>)[key];
+      if (typeof value === 'number' && Number.isInteger(value) && value >= 400 && value < 600)
+        return value;
+    }
+  }
+  return 500;
+}
+
+/**
+ * JSON error replies that keep the error's own status, so a 4xx raised by a plugin or by
+ * validation stays a 4xx instead of becoming a 500. For the root app (server.ts) and the test app.
+ */
+export function registerErrorHandler(app: FastifyInstance): void {
+  app.setErrorHandler((err: unknown, _req, reply) => {
+    const status = errorStatus(err);
+    if (status >= 500) app.log.error(err);
+    else app.log.warn(err);
+    const message = err instanceof Error ? err.message : String(err);
+    reply.code(status).send({ error: message });
+  });
+}
+
+/** `?refresh=1` or `?refresh=true` */
+function wantsRefresh(query: unknown): boolean {
+  const refresh = (query as { refresh?: unknown } | undefined)?.refresh;
+  return refresh === '1' || refresh === 'true' || refresh === '';
+}
 
 /**
  * HTTP surface. Contract lives in packages/shared/src/api.ts; keep them in sync.
@@ -103,20 +151,33 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     return { runs };
   });
 
-  // Cross-agent mission report, rebuilt from the mission's runs on every request. (W5, Zach)
-  app.get<{ Params: { id: string } }>('/missions/:id/report', async (req, reply) => {
-    if (!db.getMission(req.params.id)) return reply.code(404).send({ error: 'mission not found' });
-    const result = await regenerateMissionReport(req.params.id);
-    if (!result) return reply.code(404).send({ error: 'no finished runs for this mission yet' });
-    return { report: result.report };
-  });
+  // Cross-agent mission report: the file written when the last run finished, rebuilt only when a
+  // run has finished since or with ?refresh=1, so a read never rewrites it. (W5, Zach)
+  app.get<{ Params: { id: string }; Querystring: { refresh?: string } }>(
+    '/missions/:id/report',
+    async (req, reply) => {
+      if (!db.getMission(req.params.id))
+        return reply.code(404).send({ error: 'mission not found' });
+      const result = await currentMissionReport(req.params.id, {
+        refresh: wantsRefresh(req.query),
+      });
+      if (!result) return reply.code(404).send({ error: 'no finished runs for this mission yet' });
+      return { report: result.report };
+    },
+  );
 
-  app.get<{ Params: { id: string } }>('/missions/:id/report.md', async (req, reply) => {
-    if (!db.getMission(req.params.id)) return reply.code(404).send({ error: 'mission not found' });
-    const result = await regenerateMissionReport(req.params.id);
-    if (!result) return reply.code(404).send({ error: 'no finished runs for this mission yet' });
-    return reply.type(MARKDOWN).send(fs.readFileSync(result.mdPath, 'utf8'));
-  });
+  app.get<{ Params: { id: string }; Querystring: { refresh?: string } }>(
+    '/missions/:id/report.md',
+    async (req, reply) => {
+      if (!db.getMission(req.params.id))
+        return reply.code(404).send({ error: 'mission not found' });
+      const result = await currentMissionReport(req.params.id, {
+        refresh: wantsRefresh(req.query),
+      });
+      if (!result) return reply.code(404).send({ error: 'no finished runs for this mission yet' });
+      return reply.type(MARKDOWN).send(fs.readFileSync(result.mdPath, 'utf8'));
+    },
+  );
 
   // ---- runs -------------------------------------------------------------------
   app.get('/runs', async () => ({ runs: db.listRuns() }));
@@ -158,12 +219,15 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     const send = (data: unknown) => reply.raw.write(`data: ${JSON.stringify(data)}\n\n`);
     send({ type: 'status', runId: run.id, status: run.status, at: nowIso() });
 
+    // A finished run publishes nothing more; close instead of holding the connection open.
+    if (isTerminalStatus(run.status)) {
+      reply.raw.end();
+      return reply;
+    }
+
     const unsubscribe = subscribe(run.id, (event) => {
       send(event);
-      if (
-        event.type === 'status' &&
-        ['passed', 'failed', 'error', 'cancelled'].includes(event.status)
-      ) {
+      if (event.type === 'status' && isTerminalStatus(event.status)) {
         unsubscribe();
         reply.raw.end();
       }
@@ -276,10 +340,24 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   // Screenshots, aria snapshots, traces and both report kinds, by their artifacts-relative path:
   // GET /artifacts/<runId>/step-001.png, GET /artifacts/missions/<missionId>/report.md.
   fs.mkdirSync(config.artifactsDir, { recursive: true }); // the plugin requires an existing root
-  await app.register(fastifyStatic, {
-    root: config.artifactsDir,
-    prefix: '/artifacts/',
-    decorateReply: false,
-    index: false,
+  await app.register(async (artifacts) => {
+    // @fastify/static refuses `..` segments and directory reads with a 403 and null bytes with a
+    // 400. Error handlers are encapsulated per plugin scope, so this one keeps those statuses
+    // (403 becomes 404: a probe learns nothing about what exists) whatever handler the root app
+    // installs afterwards. Nothing here ever reads outside the artifacts dir; this is about
+    // answering refusals with their status instead of a 500.
+    artifacts.setErrorHandler((err: unknown, _req, reply) => {
+      const status = errorStatus(err);
+      if (status === 403 || status === 404) return reply.code(404).send({ error: 'not found' });
+      if (status >= 500) artifacts.log.error(err);
+      return reply.code(status).send({ error: err instanceof Error ? err.message : String(err) });
+    });
+    await artifacts.register(fastifyStatic, {
+      root: config.artifactsDir,
+      prefix: '/artifacts/',
+      decorateReply: false,
+      index: false,
+      dotfiles: 'ignore', // .gitkeep and any other dotfile under data/artifacts stay private
+    });
   });
 }

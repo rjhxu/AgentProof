@@ -23,6 +23,8 @@ import {
   browserRunEvidenceForCart,
   fetchCartWithCookies,
   gammaVerification,
+  productPathMatches,
+  screenshotEvidenceForPage,
   verificationInputFromBrowserRun,
   type BrowserRunResult,
 } from './assess';
@@ -31,7 +33,7 @@ import { runGamma } from './gamma';
 import { getLlm } from './llm';
 import type { LlmEffort } from './llm-types';
 import { generateMission } from './mission-generator';
-import { generateNarrative } from './narrative';
+import { deterministicNarrative, generateNarrative } from './narrative';
 import { AGENT_PROFILES, estimateCostUsd, profileSummary, resolveModel } from './profiles';
 import { buildAgentReport, renderAgentReportMarkdown, writeReportFiles } from './report';
 import { SCENARIOS, parseScenarioId, scenarioMission, type ScenarioId } from './scenarios';
@@ -39,11 +41,18 @@ import { SCENARIOS, parseScenarioId, scenarioMission, type ScenarioId } from './
 /**
  * One agent, one scenario, no dashboard:
  *
- *   pnpm --filter @agentproof/agent run -- --agent alpha --bug A
+ *   pnpm cli -- --agent alpha --bug A
+ *   (long form: pnpm --filter @agentproof/agent cli -- --agent alpha --bug A)
  *
  * Runs the agent against the store, verifies the cart through the session cookies, writes
- * report.json and report.md under --out/<runId>, and prints a summary. Exit code 0 whenever a
- * report was produced (a failed mission is a result, not an error); 2 on an internal error.
+ * report.json and report.md under --out/<runId>, and prints a summary. The run's usage total
+ * includes the narrator call, as the runner's does, so both report the same cost for a run.
+ *
+ * Exit codes: 0 when the verifier reached a verdict (a failed mission is a result, not an error);
+ * 1 when the agent run ended in an error before the store could be verified (the report is still
+ * written, with no checkpoints, as the runner records an errored run without a verification);
+ * 2 on bad arguments or an internal error.
+ *
  * The only top-level side effect is main(), guarded so importing this module in tests is inert.
  */
 
@@ -59,6 +68,10 @@ export const KIND_BY_NAME: Record<AgentName, AgentKind> = {
 
 const EFFORTS: LlmEffort[] = ['low', 'medium', 'high'];
 const DEFAULT_STORE_URL = 'http://localhost:5000';
+
+/** Gamma runs no model: the same constants the runner records (apps/runner/src/jobs.ts). */
+export const GAMMA_RESOLVED_MODEL = 'none';
+export const GAMMA_USAGE: LlmUsage = { ...EMPTY_USAGE, estimatedCostUsd: 0 };
 
 export class CliUsageError extends Error {
   constructor(message: string) {
@@ -81,9 +94,8 @@ export interface CliArgs {
   json: boolean;
 }
 
-export const USAGE = `Usage: pnpm --filter @agentproof/agent run run -- --agent <alpha|beta|sigma|gamma> [options]
-   (the package script is named "run", so with pnpm 12 it follows pnpm's own run subcommand;
-    equivalently: pnpm --filter @agentproof/agent exec tsx --env-file-if-exists=../../.env src/cli.ts ...)
+export const USAGE = `Usage: pnpm cli -- --agent <alpha|beta|sigma|gamma> [options]
+       (long form: pnpm --filter @agentproof/agent cli -- --agent <name> [options])
 
 Runs one agent on one mission against the storefront and writes an agent report.
 
@@ -99,6 +111,13 @@ Options
   --out <dir>          artifacts root; the run writes to <dir>/<runId> (default <repo>/data/artifacts/cli)
   --json               print the report JSON instead of the Markdown
   --help               this text
+
+--model and --effort do not apply to gamma, which runs no model.
+
+Exit codes
+  0  the verifier reached a verdict (passed or failed); report written
+  1  the agent run ended in an error before the store could be verified; report written
+  2  bad arguments or an internal error
 
 Set AGENTPROOF_DEBUG=1 to print stack traces on internal errors.`;
 
@@ -234,7 +253,8 @@ export interface BuildRunArgs {
   config: AgentConfig;
   steps: RunStep[];
   evidence: Evidence[];
-  verification: VerificationResult;
+  /** Absent when the run ended in an error before anything was verified; the status is then "error" */
+  verification?: VerificationResult | undefined;
   /** The agent's own stopping claim; outcome "error" makes the run status "error" */
   claim?: AgentClaim;
   resolvedModel: string;
@@ -246,10 +266,20 @@ export interface BuildRunArgs {
   reportPath?: string;
 }
 
-/** A shared `Run` from what a CLI run produced. Status is the verifier's, or "error" when the agent crashed. */
+/**
+ * A shared `Run` from what a CLI run produced. Status is the verifier's, or "error" when the agent
+ * crashed or nothing was verified (an infra failure is never a store verdict).
+ */
 export function buildRunFromResult(args: BuildRunArgs): Run {
+  const { verification } = args;
   const status: RunStatus =
-    args.claim?.outcome === 'error' ? 'error' : overallStatus(args.verification);
+    args.claim?.outcome === 'error' || !verification ? 'error' : overallStatus(verification);
+  const errorMessage =
+    status !== 'error'
+      ? undefined
+      : args.claim?.outcome === 'error'
+        ? args.claim.summary
+        : 'The run was not verified';
   return {
     id: args.runId,
     missionId: args.mission.id,
@@ -261,12 +291,12 @@ export function buildRunFromResult(args: BuildRunArgs): Run {
     finishedAt: args.finishedAt,
     steps: args.steps,
     evidence: args.evidence,
-    verification: args.verification,
+    ...(verification ? { verification } : {}),
     ...(args.claim ? { claim: args.claim } : {}),
     resolvedModel: args.resolvedModel,
     usage: args.usage,
     ...(args.reportPath ? { reportPath: args.reportPath } : {}),
-    ...(status === 'error' && args.claim ? { errorMessage: args.claim.summary } : {}),
+    ...(errorMessage ? { errorMessage } : {}),
   };
 }
 
@@ -301,8 +331,10 @@ interface CliIo {
   err(line: string): void;
 }
 
-async function runCli(args: CliArgs, io: CliIo): Promise<void> {
+/** Runs the agent, writes the report, prints the summary; returns the run's final status. */
+async function runCli(args: CliArgs, io: CliIo): Promise<RunStatus> {
   const kind = KIND_BY_NAME[args.agent];
+  const isGamma = kind === 'gamma_structured';
   const scenario = args.prompt ? undefined : SCENARIOS[args.bug];
 
   let mission: Mission = args.prompt
@@ -310,10 +342,13 @@ async function runCli(args: CliArgs, io: CliIo): Promise<void> {
     : scenarioMission(args.bug, args.store);
   if (args.maxSteps !== undefined) mission = { ...mission, maxSteps: args.maxSteps };
 
+  if (isGamma && (args.model || args.effort)) {
+    io.err('[cli] --model and --effort do not apply to gamma (no model call); ignored');
+  }
   const config = AgentConfig.parse({
     kind,
-    ...(args.model ? { model: args.model } : {}),
-    ...(args.effort ? { effort: args.effort } : {}),
+    ...(!isGamma && args.model ? { model: args.model } : {}),
+    ...(!isGamma && args.effort ? { effort: args.effort } : {}),
     ...(args.maxSteps !== undefined ? { maxSteps: args.maxSteps } : {}),
     headed: args.headed,
   });
@@ -332,25 +367,26 @@ async function runCli(args: CliArgs, io: CliIo): Promise<void> {
   const startedAt = createdAt;
   const steps: RunStep[] = [];
   const evidence: Evidence[] = [];
-  let verification: VerificationResult;
+  let verification: VerificationResult | undefined;
   let claim: AgentClaim;
   let resolvedModel: string;
   let provider: string;
   let effort: LlmEffort | undefined = undefined;
   let usage: LlmUsage;
 
-  if (kind === 'gamma_structured') {
+  if (isGamma) {
     const result = await runGamma(mission);
     const assessed = gammaVerification({ mission, result, runId });
     evidence.push(...assessed.evidence);
     verification = assessed.verification;
     claim = {
-      outcome: 'done',
+      // Gamma claims "done" only when it found a variant to add; otherwise it gave up.
+      outcome: result.selectedVariant ? 'done' : 'fail',
       summary: result.notes.join(' ') || 'Inspected the catalog feed and the cart API.',
     };
     provider = 'none';
-    resolvedModel = resolveModel(kind, 'xai', args.model);
-    usage = { ...EMPTY_USAGE };
+    resolvedModel = GAMMA_RESOLVED_MODEL;
+    usage = { ...GAMMA_USAGE };
     for (const note of result.notes) io.err(`[gamma] ${note}`);
   } else {
     const callbacks: AgentCallbacks = {
@@ -365,29 +401,6 @@ async function runCli(args: CliArgs, io: CliIo): Promise<void> {
     };
     const result: BrowserRunResult = await runBrowserAgent(mission, config, artifactDir, callbacks);
 
-    const cart = await fetchCartWithCookies(mission.storeUrl, result.cookies ?? []);
-    const cartEvidenceIds: string[] = [];
-    if (cart) {
-      const cartEvidence = browserRunEvidenceForCart(runId, cart);
-      evidence.push(cartEvidence);
-      cartEvidenceIds.push(cartEvidence.id);
-      io.err(
-        `[cli] cart via session cookies: ${cart.items.length} item(s), subtotal ${cart.currency} ${cart.subtotal}`,
-      );
-    } else {
-      io.err('[cli] cart could not be read through the session cookies (not verified)');
-    }
-    const screenshotIds = evidence.filter((e) => e.kind === 'screenshot').map((e) => e.id);
-    verification = verify(
-      verificationInputFromBrowserRun({
-        mission,
-        result,
-        ...(cart ? { cart } : {}),
-        cartEvidenceIds,
-        productEvidenceIds: screenshotIds.slice(0, 1),
-        checkoutEvidenceIds: screenshotIds.slice(-1),
-      }),
-    );
     claim = {
       outcome: result.outcome,
       summary: result.summary,
@@ -399,12 +412,63 @@ async function runCli(args: CliArgs, io: CliIo): Promise<void> {
       resolveModel(kind, provider === 'anthropic' ? 'anthropic' : 'xai', args.model);
     effort = result.effort ?? args.effort ?? AGENT_PROFILES[kind].defaultEffort;
     usage = result.usage ?? sumStepUsage(steps) ?? { ...EMPTY_USAGE };
+
+    if (result.outcome === 'error') {
+      // As the runner does: an errored run is infra, not a store verdict. Nothing is verified.
+      io.err(`[cli] agent run ended in error: ${result.summary}; the store was not verified`);
+    } else {
+      // The verdict rests on what the store holds, read through the session cookies. No cookie
+      // or no readable cart is infra: the cart checkpoints then come back not_verified.
+      const cart = await fetchCartWithCookies(mission.storeUrl, result.cookies ?? []);
+      const cartEvidenceIds: string[] = [];
+      if (cart) {
+        const cartEvidence = browserRunEvidenceForCart(runId, cart);
+        evidence.push(cartEvidence);
+        cartEvidenceIds.push(cartEvidence.id);
+        io.err(
+          `[cli] cart via session cookies: ${cart.items.length} item(s), subtotal ${cart.currency} ${cart.subtotal}`,
+        );
+      } else {
+        io.err(
+          '[cli] no cart could be read for this session (no store cookie, or the store returned no readable cart); cart checkpoints are not verified',
+        );
+      }
+      const product = mission.requirements.product;
+      verification = verify(
+        verificationInputFromBrowserRun({
+          mission,
+          result,
+          ...(cart ? { cart } : {}),
+          cartEvidenceIds,
+          productEvidenceIds: screenshotEvidenceForPage(steps, (p) =>
+            productPathMatches(p, product),
+          ),
+          checkoutEvidenceIds: screenshotEvidenceForPage(steps, (p) => p === '/checkout'),
+        }),
+      );
+    }
   }
 
   if (usage.estimatedCostUsd === undefined) {
     const estimated = estimateCostUsd(resolvedModel, usage);
     if (estimated !== undefined) usage = { ...usage, estimatedCostUsd: estimated };
   }
+
+  const profile = profileSummary(kind, resolvedModel, provider, effort);
+  const narrativeBase = {
+    kind,
+    steps,
+    claim,
+    checkpoints: verification?.checkpoints ?? [],
+    perceives: profile.perceives,
+  };
+  // An errored run gets the deterministic summary: no paid narrator call for an infra failure.
+  const narrative = verification
+    ? await generateNarrative({ ...narrativeBase, mission })
+    : { narrative: deterministicNarrative(narrativeBase), usage: { ...EMPTY_USAGE } };
+  // Same accounting as the runner (apps/runner/src/jobs.ts finishRun): the narrator call is part
+  // of the run's usage, so Run.usage, report.usage and the summary lines all show one number.
+  usage = addUsage(usage, narrative.usage);
 
   const finishedAt = nowIso();
   const reportPath = path.posix.join(runId, 'report.json');
@@ -424,15 +488,6 @@ async function runCli(args: CliArgs, io: CliIo): Promise<void> {
     reportPath,
   });
 
-  const profile = profileSummary(kind, resolvedModel, provider, effort);
-  const narrative = await generateNarrative({
-    kind,
-    mission,
-    steps,
-    claim,
-    checkpoints: verification.checkpoints,
-    perceives: profile.perceives,
-  });
   const report = buildAgentReport({
     mission,
     run,
@@ -443,16 +498,21 @@ async function runCli(args: CliArgs, io: CliIo): Promise<void> {
   const markdown = renderAgentReportMarkdown(report, { linkBase: runId });
   const written = await writeReportFiles(artifactDir, report, markdown);
 
+  const firstFailure = verification
+    ? verification.firstFailure
+      ? `${verification.firstFailure.id}${verification.firstFailure.detail ? ` (${verification.firstFailure.detail})` : ''}`
+      : 'none'
+    : 'not verified (run ended in error)';
   const summary = [
     '',
     `Status:        ${run.status}`,
-    `First failure: ${verification.firstFailure ? `${verification.firstFailure.id}${verification.firstFailure.detail ? ` (${verification.firstFailure.detail})` : ''}` : 'none'}`,
+    `First failure: ${firstFailure}`,
     `Claim:         ${claim.outcome}: ${claim.summary}`,
     `Steps:         ${steps.length} of ${mission.maxSteps}`,
     `Model:         ${provider === 'none' ? 'none (deterministic, no model)' : `${resolvedModel} (${provider}${effort ? `, effort ${effort}` : ''})`}`,
-    `Tokens:        ${usage.inputTokens} in / ${usage.outputTokens} out, ${usage.calls} call(s), ${usage.imageInputs} image(s)`,
+    `Tokens:        ${usage.inputTokens} in / ${usage.outputTokens} out, ${usage.calls} call(s), ${usage.imageInputs} image(s) (agent + narrator)`,
     `Est. cost:     ${formatCost(usage)}`,
-    `Narrative:     ${narrative.usage.calls ? `${narrative.usage.inputTokens} in / ${narrative.usage.outputTokens} out` : 'deterministic (no model call)'}`,
+    `Narrative:     ${narrative.usage.calls ? `${narrative.usage.inputTokens} in / ${narrative.usage.outputTokens} out, ${narrative.usage.calls} call(s), counted in the totals above` : 'deterministic (no model call)'}`,
     `Report JSON:   ${written.jsonPath}`,
     `Report MD:     ${written.mdPath}`,
     '',
@@ -462,9 +522,14 @@ async function runCli(args: CliArgs, io: CliIo): Promise<void> {
 
   if (args.json) io.out(JSON.stringify(report, null, 2));
   else io.out(markdown);
+  return run.status;
 }
 
-/** Entry point. Returns the process exit code instead of calling process.exit, for testability. */
+/**
+ * Entry point. Returns the process exit code instead of calling process.exit, for testability:
+ * 0 for a verdict (passed or failed), 1 for a run that ended in an error, 2 for a usage or
+ * internal error.
+ */
 export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
   const io: CliIo = {
     out: (line) => process.stdout.write(`${line}\n`),
@@ -484,8 +549,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     return 0;
   }
   try {
-    await runCli(args, io);
-    return 0;
+    const status = await runCli(args, io);
+    return status === 'error' ? 1 : 0;
   } catch (err) {
     io.err(`[cli] internal error: ${errorText(err)}`);
     if (process.env.AGENTPROOF_DEBUG === '1' && err instanceof Error && err.stack)

@@ -1,12 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
-import { Evidence, VerificationResult, type ObservedCart } from '@agentproof/shared';
-import { hoodieMission } from '@agentproof/shared/fixtures';
+import { Evidence, VerificationResult, type ObservedCart, type RunStep } from '@agentproof/shared';
+import { alphaFailedRun, hoodieMission } from '@agentproof/shared/fixtures';
 import { verify } from '@agentproof/verifier';
 import {
   browserRunEvidenceForCart,
   cookieHeaderFor,
   fetchCartWithCookies,
   gammaVerification,
+  productPathMatches,
+  productSlugMatches,
+  productSlugOf,
+  screenshotEvidenceForPage,
   verificationInputFromBrowserRun,
   type BrowserRunResult,
 } from './assess';
@@ -76,11 +80,11 @@ describe('fetchCartWithCookies', () => {
     expect(cart?.source).toBe('api');
   });
 
-  it('sends no Cookie header when no cookie applies to the store host', async () => {
+  it('makes no request when no cookie applies to the store host: an anonymous cart is not this run’s', async () => {
     const { calls, impl } = fakeFetch(() => Response.json({ items: [], subtotal: 0 }));
-    const cart = await fetchCartWithCookies(STORE, [sessionCookies[1]!], impl);
-    expect(calls[0]!.init?.headers).not.toHaveProperty('Cookie');
-    expect(cart).toEqual({ items: [], subtotal: 0, currency: 'USD', source: 'api' });
+    await expect(fetchCartWithCookies(STORE, [sessionCookies[1]!], impl)).resolves.toBeUndefined();
+    await expect(fetchCartWithCookies(STORE, [], impl)).resolves.toBeUndefined();
+    expect(calls).toHaveLength(0);
   });
 
   it('returns undefined on a non-2xx response', async () => {
@@ -119,6 +123,73 @@ describe('browserRunEvidenceForCart', () => {
   });
 });
 
+describe('productSlugMatches / productPathMatches', () => {
+  it('matches a slug whose words are within the product or that contains every product word', () => {
+    expect(productSlugMatches('black-hoodie', 'black hoodie')).toBe(true);
+    expect(productSlugMatches('merino-socks', 'merino crew socks')).toBe(true);
+    expect(productSlugMatches('crewneck-sweatshirt', 'crewneck sweatshirt')).toBe(true);
+    expect(productSlugMatches('studio-headphones', 'studio headphones')).toBe(true);
+    expect(productSlugMatches('canvas-tote', 'canvas tote')).toBe(true);
+    expect(productSlugMatches('black-hoodie', 'hoodie')).toBe(true);
+    expect(productSlugMatches('Black_Hoodie', 'Black Hoodie')).toBe(true);
+  });
+
+  it('rejects a different product that merely shares a word, and empty input', () => {
+    expect(productSlugMatches('grey-hoodie', 'black hoodie')).toBe(false);
+    expect(productSlugMatches('canvas-tote', 'black hoodie')).toBe(false);
+    expect(productSlugMatches('', 'black hoodie')).toBe(false);
+    expect(productSlugMatches('black-hoodie', '')).toBe(false);
+  });
+
+  it('reads the slug from a /products/ pathname or URL only', () => {
+    expect(productSlugOf('/products/black-hoodie')).toBe('black-hoodie');
+    expect(productSlugOf('/products/black-hoodie/reviews')).toBe('black-hoodie');
+    expect(productSlugOf('/products/')).toBeUndefined();
+    expect(productSlugOf('/cart')).toBeUndefined();
+    expect(productSlugOf(undefined)).toBeUndefined();
+    expect(productPathMatches('/products/black-hoodie', 'black hoodie')).toBe(true);
+    expect(productPathMatches('http://localhost:5000/products/black-hoodie', 'black hoodie')).toBe(
+      true,
+    );
+    expect(productPathMatches('http://localhost:5000/products/grey-hoodie', 'black hoodie')).toBe(
+      false,
+    );
+    expect(productPathMatches('/checkout', 'black hoodie')).toBe(false);
+    expect(productPathMatches('::not a url::', 'black hoodie')).toBe(false);
+  });
+});
+
+describe('screenshotEvidenceForPage', () => {
+  const steps: RunStep[] = alphaFailedRun.steps;
+
+  it('returns the screenshot of the first step observed on a matching page, else nothing', () => {
+    expect(screenshotEvidenceForPage(steps, (p) => p.startsWith('/products/'))).toEqual([
+      steps[1]!.screenshotEvidenceId,
+    ]);
+    expect(screenshotEvidenceForPage(steps, (p) => p === '/')).toEqual([
+      steps[0]!.screenshotEvidenceId,
+    ]);
+    expect(screenshotEvidenceForPage(steps, (p) => p === '/checkout')).toEqual([]);
+    expect(screenshotEvidenceForPage([], () => true)).toEqual([]);
+  });
+
+  it('skips steps without a URL or a screenshot', () => {
+    const bare: RunStep[] = [
+      { index: 0, at: 't', outcome: 'ok' },
+      { index: 1, at: 't', url: '::bad::', outcome: 'ok', screenshotEvidenceId: 'ev_x' },
+      { index: 2, at: 't', url: 'http://localhost:5000/checkout', outcome: 'ok' },
+      {
+        index: 3,
+        at: 't',
+        url: 'http://localhost:5000/checkout',
+        outcome: 'ok',
+        screenshotEvidenceId: 'ev_ok',
+      },
+    ];
+    expect(screenshotEvidenceForPage(bare, (p) => p === '/checkout')).toEqual(['ev_ok']);
+  });
+});
+
 describe('verificationInputFromBrowserRun', () => {
   const result = (over: Partial<BrowserRunResult> = {}): BrowserRunResult => ({
     outcome: 'done',
@@ -134,6 +205,10 @@ describe('verificationInputFromBrowserRun', () => {
     ...over,
   });
   const cartS: ObservedCart = { ...cartJson('S'), source: 'api' };
+  const missionFor = (product: string) => ({
+    ...hoodieMission,
+    requirements: { ...hoodieMission.requirements, product },
+  });
 
   it('finds the product page from the visited URLs and names it from the slug', () => {
     const input = verificationInputFromBrowserRun({
@@ -144,6 +219,39 @@ describe('verificationInputFromBrowserRun', () => {
     expect(input.productPage).toEqual({ found: true, name: 'black hoodie', evidenceIds: [] });
     expect(input.mission).toBe(hoodieMission);
     expect(input.cart).toBe(cartS);
+  });
+
+  it('does not count a different product’s page as discovering the mission product', () => {
+    const wrong = verificationInputFromBrowserRun({
+      mission: hoodieMission,
+      result: result({
+        visitedUrls: ['http://localhost:5000/', 'http://localhost:5000/products/grey-hoodie'],
+      }),
+      cart: cartS,
+    });
+    expect(wrong.productPage).toEqual({ found: false, name: 'grey hoodie', evidenceIds: [] });
+    expect(verify(wrong).checkpoints.find((c) => c.id === 'product_discovered')?.status).toBe(
+      'failed',
+    );
+
+    // The last matching page names the product even when a wrong one was visited after it.
+    const detour = verificationInputFromBrowserRun({
+      mission: hoodieMission,
+      result: result({
+        visitedUrls: [
+          'http://localhost:5000/products/black-hoodie',
+          'http://localhost:5000/products/grey-hoodie',
+        ],
+      }),
+    });
+    expect(detour.productPage).toMatchObject({ found: true, name: 'black hoodie' });
+
+    // A slug shorter than the mission's product name (scenario D) still matches.
+    const socks = verificationInputFromBrowserRun({
+      mission: missionFor('merino crew socks'),
+      result: result({ visitedUrls: ['http://localhost:5000/products/merino-socks'] }),
+    });
+    expect(socks.productPage).toMatchObject({ found: true, name: 'merino socks' });
   });
 
   it('counts checkout as reached only with a checkout URL and a non-empty cart', () => {
@@ -190,7 +298,7 @@ describe('verificationInputFromBrowserRun', () => {
     expect(input.productPage?.name).toBeUndefined();
 
     const productOnly = verificationInputFromBrowserRun({
-      mission: hoodieMission,
+      mission: missionFor('canvas tote'),
       result: result({
         visitedUrls: undefined,
         finalUrl: 'http://localhost:5000/products/canvas-tote',
@@ -210,7 +318,7 @@ describe('verificationInputFromBrowserRun', () => {
       mission: hoodieMission,
       result: result({ visitedUrls: ['::not a url::', 'http://localhost:5000/products/x-y'] }),
     });
-    expect(odd.productPage?.name).toBe('x y');
+    expect(odd.productPage).toMatchObject({ found: false, name: 'x y' });
   });
 
   it('reproduces the Bug A verdict when run through the verifier', () => {

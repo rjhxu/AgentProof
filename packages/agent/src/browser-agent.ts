@@ -88,8 +88,18 @@ type Ending = { outcome: Outcome; summary: string };
 const NAVIGATION_TIMEOUT_MS = 15_000;
 const ACTION_TIMEOUT_MS = 5_000;
 const SETTLE_MS = 250;
+/** How long a coordinate click gets to commit a navigation before the loop settles and observes. */
+const NAVIGATION_COMMIT_MS = 1_000;
 const MODEL_TIMEOUT_MS = 120_000;
-const MODEL_MAX_TOKENS = 2048;
+/**
+ * Finish reasons that mean the provider's output cap cut the reply (mirrors llm.ts). The cap is
+ * chosen by llm.ts per effort (it includes reasoning tokens), so decide() sends no maxTokens.
+ */
+const TRUNCATED_FINISH_REASONS: ReadonlySet<string> = new Set([
+  'max_output_tokens',
+  'length',
+  'max_tokens',
+]);
 const SCROLL_PX = 600;
 /** Consecutive error / invalid_action / rejected_by_policy steps before the run fails as stuck. */
 export const STUCK_STEP_LIMIT = 3;
@@ -224,10 +234,19 @@ export async function decide(args: DecideArgs): Promise<Decision> {
     ],
     jsonSchema: actionDraftJsonSchema(),
     ...(effort === undefined ? {} : { effort }),
-    maxTokens: MODEL_MAX_TOKENS,
     timeoutMs: MODEL_TIMEOUT_MS,
   });
-  if (response.json === undefined) return { ok: false, response, reason: 'model returned no JSON' };
+  if (response.json === undefined) {
+    const truncated =
+      response.finishReason !== undefined && TRUNCATED_FINISH_REASONS.has(response.finishReason);
+    return {
+      ok: false,
+      response,
+      reason: truncated
+        ? `model output truncated at the token cap (finishReason=${response.finishReason}): no JSON action`
+        : 'model returned no JSON',
+    };
+  }
   // toAgentAction treats nulls and empty strings as absent; the strict-schema output goes in raw.
   const conversion = toAgentAction(response.json, kind, observation.viewport);
   return conversion.ok
@@ -258,20 +277,31 @@ const INTERACTIVE_ROLES = [
   'spinbutton',
 ];
 
+/** Role-less containers a div "button" is made of; the guard walks up through these only. */
+const GENERIC_TAGS = ['div', 'span'];
+const GENERIC_ANCESTOR_LEVELS = 3;
+/** A generic ancestor with more text than this is a page wrapper, not a button. */
+const GENERIC_TEXT_MAX_CHARS = 100;
+
 interface PointArg {
   x: number;
   y: number;
   selector: string;
   tags: string[];
   roles: string[];
+  generic: string[];
+  ancestorLevels: number;
+  genericMaxChars: number;
 }
 
 /**
  * Text of the control under a viewport point: textContent, aria-label, value and title of the
- * closest button/link/input/label/role element, or of the hit element itself when the closest
- * match is a non-interactive container (a click on plain text inside a role="region" must not
- * inherit the whole region's text). The function runs inside the page, so it uses no closures,
- * and reaches `document` through globalThis because this package compiles without DOM types.
+ * closest button/link/input/label/role element (plus, for a label, those of the control it
+ * labels), or of the hit element itself when the closest match is a non-interactive container
+ * (a click on plain text inside a role="region" must not inherit the whole region's text). When
+ * the hit is a text-less child of a role-less div "button" (an icon), the nearest short-texted
+ * div/span ancestor names it. The function runs inside the page, so it uses no closures, and
+ * reaches `document` through globalThis because this package compiles without DOM types.
  */
 async function controlTextAt(page: Page, x: number, y: number): Promise<string> {
   const arg: PointArg = {
@@ -280,7 +310,12 @@ async function controlTextAt(page: Page, x: number, y: number): Promise<string> 
     selector: CONTROL_SELECTOR,
     tags: INTERACTIVE_TAGS,
     roles: INTERACTIVE_ROLES,
+    generic: GENERIC_TAGS,
+    ancestorLevels: GENERIC_ANCESTOR_LEVELS,
+    genericMaxChars: GENERIC_TEXT_MAX_CHARS,
   };
+  // No inner named function or arrow bound to a const in here: tsx/esbuild (the CLI and the
+  // scripted harness) wraps those in a __name() helper that does not exist inside the page.
   const text = await page.evaluate((a: PointArg) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const doc = (globalThis as unknown as { document?: any }).document;
@@ -289,17 +324,47 @@ async function controlTextAt(page: Page, x: number, y: number): Promise<string> 
     const control = typeof hit.closest === 'function' ? hit.closest(a.selector) : null;
     const tag = String(control?.tagName ?? '').toLowerCase();
     const role = String(control?.getAttribute?.('role') ?? '').toLowerCase();
-    const source = control && (a.tags.includes(tag) || a.roles.includes(role)) ? control : hit;
-    const parts: unknown[] = [
-      source.textContent,
-      source.getAttribute?.('aria-label'),
-      source.value,
-      source.getAttribute?.('title'),
-    ];
-    return parts
-      .filter((p): p is string => typeof p === 'string' && p.trim() !== '')
-      .map((p) => p.trim())
-      .join(' ');
+    const interactive =
+      control && (a.tags.includes(tag) || a.roles.includes(role)) ? control : null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let sources: any[];
+    if (interactive) {
+      sources = [interactive];
+      if (tag === 'label' && interactive.control) sources.push(interactive.control);
+    } else {
+      sources = [hit];
+      const hitOwn: unknown[] = [hit.textContent, hit.getAttribute?.('aria-label'), hit.value];
+      if (!hitOwn.some((p) => typeof p === 'string' && p.trim() !== '')) {
+        let el = hit.parentElement;
+        for (let level = 0; el && level < a.ancestorLevels; level++, el = el.parentElement) {
+          const elTag = String(el.tagName ?? '').toLowerCase();
+          if (!a.generic.includes(elTag) || el.getAttribute?.('role')) break;
+          const own: unknown[] = [el.textContent, el.getAttribute?.('aria-label')];
+          const joined = own
+            .filter((p) => typeof p === 'string' && p.trim() !== '')
+            .map((p) => String(p).trim())
+            .join(' ')
+            .replace(/\s+/g, ' ');
+          if (joined === '') continue;
+          if (joined.length <= a.genericMaxChars) sources = [el];
+          break;
+        }
+      }
+    }
+    const parts: string[] = [];
+    for (const source of sources) {
+      const candidates: unknown[] = [
+        source.textContent,
+        source.getAttribute?.('aria-label'),
+        source.value,
+        source.getAttribute?.('title'),
+      ];
+      for (const p of candidates) {
+        if (typeof p !== 'string' || p.trim() === '') continue;
+        if (!parts.includes(p.trim())) parts.push(p.trim());
+      }
+    }
+    return parts.join(' ');
   }, arg);
   return typeof text === 'string'
     ? text.replace(/\s+/g, ' ').trim().slice(0, DETAIL_MAX_CHARS)
@@ -347,6 +412,32 @@ async function settle(page: Page): Promise<void> {
 }
 
 /**
+ * After a mouse click: locator.click() waits for a navigation it starts, page.mouse.click() does
+ * not, and waitForLoadState() resolves at once on the old document. Give a navigation up to
+ * NAVIGATION_COMMIT_MS to commit, else the next screenshot shows the pre-click page and a vision
+ * agent clicks "Add to cart" twice.
+ */
+async function settleAfterMouse(page: Page, urlBefore: string): Promise<void> {
+  if (page.url() === urlBefore) {
+    await page
+      .waitForURL((u) => u.href !== urlBefore, {
+        timeout: NAVIGATION_COMMIT_MS,
+        waitUntil: 'domcontentloaded',
+      })
+      .catch(() => undefined);
+  }
+  await settle(page);
+}
+
+/**
+ * keyboard.type() presses Enter for a line break, which submits the focused form past the
+ * payment guard (it only inspects the element under the point). Flatten line breaks to spaces.
+ */
+function typableText(text: string): string {
+  return /[\r\n]/.test(text) ? text.replace(/[\r\n]+/g, ' ').trim() : text;
+}
+
+/**
  * Execute a policy-approved action. role:name targets go through toLocator() (exact accessible
  * name, nothing else); x,y targets through the mouse. `select` resolves the option group through
  * chooseOption()'s radio -> combobox -> button ladder, or setQuantity() for a quantity group.
@@ -370,28 +461,36 @@ export async function act(
       if (target.kind === 'invalid') throw new Error(`click target ${target.reason}`);
       if (target.kind === 'role') {
         await toLocator(page, target).click({ timeout: ACTION_TIMEOUT_MS });
+        await settle(page);
       } else {
+        const before = page.url();
         await page.mouse.click(target.x, target.y);
+        await settleAfterMouse(page, before);
       }
-      await settle(page);
       return;
     }
     case 'type': {
       const target = parseTarget(action.target, kind, viewport);
       if (target.kind === 'invalid') throw new Error(`type target ${target.reason}`);
+      const text = typableText(action.text);
       if (target.kind === 'role') {
         // fill() clears the field first.
-        await toLocator(page, target).fill(action.text, { timeout: ACTION_TIMEOUT_MS });
+        await toLocator(page, target).fill(text, { timeout: ACTION_TIMEOUT_MS });
       } else {
         // Click to focus, select whatever is there (a quantity field holds "1"), then type.
         await page.mouse.click(target.x, target.y);
         await page.keyboard.press('ControlOrMeta+a');
-        await page.keyboard.type(action.text);
+        await page.keyboard.type(text);
       }
       await settle(page);
       return;
     }
     case 'select': {
+      // checkAction() already refuses this; kept here because chooseOption()'s last rung clicks
+      // a button named after the value, and act() is exported.
+      if (isPaymentControl(action.value)) {
+        throw new Error(`select value "${action.value}" names a payment control; refused`);
+      }
       const group = groupLabelOf(action.target);
       if (group.toLowerCase() === 'quantity') await setQuantity(page, Number(action.value));
       else await chooseOption(page, group, action.value);
@@ -399,7 +498,10 @@ export async function act(
       return;
     }
     case 'scroll':
+      // mouse.wheel() returns before the scroll finishes; without a settle the next screenshot
+      // can be pre-scroll.
       await page.mouse.wheel(0, action.direction === 'down' ? SCROLL_PX : -SCROLL_PX);
+      await page.waitForTimeout(SETTLE_MS);
       return;
     case 'extract':
     case 'done':
@@ -549,19 +651,6 @@ export async function runBrowserAgent(
         snapshotEvidenceId = snapshotEvidence.id;
       }
 
-      // Decide.
-      const decision = await decide({
-        llm,
-        kind,
-        model: settings.model,
-        ...(settings.effort === undefined ? {} : { effort: settings.effort }),
-        mission,
-        observation,
-        history: steps,
-        stepsRemaining: stepLimit - i,
-      });
-      usage = addUsage(usage, decision.response.usage);
-
       const step: RunStep = {
         index: i,
         at,
@@ -569,8 +658,37 @@ export async function runBrowserAgent(
         outcome: 'ok',
         screenshotEvidenceId: screenshotEvidence.id,
         ...(snapshotEvidenceId === undefined ? {} : { snapshotEvidenceId }),
-        usage: decision.response.usage,
       };
+      const record = (): void => {
+        step.durationMs = Math.max(0, now() - stepStart);
+        steps.push(step);
+        cb.onStep(step);
+        cb.onLog(summarizeStep(step));
+        visit(page.url());
+      };
+
+      // Decide. A client error (after its own retries) ends the run, but the step is recorded
+      // first so the evidence captured above is referenced rather than orphaned.
+      let decision: Decision;
+      try {
+        decision = await decide({
+          llm,
+          kind,
+          model: settings.model,
+          ...(settings.effort === undefined ? {} : { effort: settings.effort }),
+          mission,
+          observation,
+          history: steps,
+          stepsRemaining: stepLimit - i,
+        });
+      } catch (err) {
+        step.outcome = 'error';
+        step.outcomeDetail = errorDetail(err);
+        record();
+        return { outcome: 'error', summary: step.outcomeDetail };
+      }
+      usage = addUsage(usage, decision.response.usage);
+      step.usage = decision.response.usage;
       let ending: Ending | undefined;
 
       if (!decision.ok) {
@@ -605,11 +723,7 @@ export async function runBrowserAgent(
       }
 
       // Record.
-      step.durationMs = Math.max(0, now() - stepStart);
-      steps.push(step);
-      cb.onStep(step);
-      cb.onLog(summarizeStep(step));
-      visit(page.url());
+      record();
 
       if (ending) return ending;
       stuck = step.outcome === 'ok' ? 0 : stuck + 1;
