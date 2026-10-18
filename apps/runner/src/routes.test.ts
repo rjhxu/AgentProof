@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import Fastify from 'fastify';
 import {
+  AgentConfig,
   AgentReport,
   Mission,
   MissionReport,
@@ -75,16 +76,18 @@ vi.mock('@agentproof/agent', async (importOriginal) => {
       },
     ),
     fetchCartWithCookies: vi.fn(async () => stubs.cart),
+    // Real by default; the Gamma test scripts it so nothing touches the network.
+    runGamma: vi.fn(actual.runGamma),
   };
 });
 
-import { createMockLlm, setLlmForTests } from '@agentproof/agent';
+import { createMockLlm, runBrowserAgent, runGamma, setLlmForTests } from '@agentproof/agent';
 
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentproof-routes-'));
 process.env.AGENTPROOF_DATA_DIR = dataDir;
 const { config } = await import('./config');
 const db = await import('./db');
-const { registerRoutes } = await import('./routes');
+const { registerErrorHandler, registerRoutes } = await import('./routes');
 const { executeRun } = await import('./jobs');
 const { subscribe } = await import('./events');
 const { generateRunReport } = await import('./reports');
@@ -99,9 +102,11 @@ afterAll(() => {
   }
 });
 
+/** The app as server.ts assembles it: routes first, then the root error handler. */
 async function server() {
   const app = Fastify();
   await registerRoutes(app);
+  registerErrorHandler(app);
   return app;
 }
 
@@ -109,6 +114,62 @@ const narratorText = 'Stub narrative: the agent added the default size.';
 function narrator() {
   return createMockLlm([{ text: narratorText, json: { narrative: narratorText } }]);
 }
+
+/** Fails loudly instead of hanging the suite when a stream never ends. */
+function withinMs<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what} did not finish within ${ms}ms`)), ms);
+  });
+  return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
+}
+
+/** The SSE body as the JSON events it carried. */
+function sseEvents(body: string): RunEvent[] {
+  return body
+    .split('\n\n')
+    .filter((chunk) => chunk.startsWith('data: '))
+    .map((chunk) => JSON.parse(chunk.slice('data: '.length)) as RunEvent);
+}
+
+/** What a client polling GET /runs/:id saw at the moment of each published event. */
+interface PolledState {
+  event: RunEvent['type'];
+  status: Run['status'];
+  reportPath?: string;
+}
+
+function recordPolled(runId: string, events: RunEvent[], polled: PolledState[]): () => void {
+  return subscribe(runId, (event) => {
+    events.push(event);
+    const stored = db.getRun(runId)!;
+    polled.push({
+      event: event.type,
+      status: stored.status,
+      ...(stored.reportPath ? { reportPath: stored.reportPath } : {}),
+    });
+  });
+}
+
+/** No poller may ever see a terminal status without the report that goes with it. */
+function expectReportWithVerdict(polled: PolledState[], reportPath: string): void {
+  for (const seen of polled) {
+    if (seen.status === 'passed' || seen.status === 'failed' || seen.status === 'error')
+      expect(seen, `${seen.event} event`).toMatchObject({ reportPath });
+  }
+  expect(polled.find((p) => p.event === 'report')).toMatchObject({ reportPath });
+}
+
+const STUB_USAGE: LlmUsage = {
+  calls: 1,
+  inputTokens: 2500,
+  outputTokens: 100,
+  reasoningTokens: 0,
+  cachedInputTokens: 0,
+  imageInputs: 0,
+  estimatedCostUsd: 0.0033,
+  llmLatencyMs: 1500,
+};
 
 const BUGS = ['A', 'B', 'C', 'D', 'E', 'control'] as const;
 
@@ -218,12 +279,82 @@ describe('GET /artifacts/*', () => {
     expect(
       (await app.inject({ url: '/artifacts/run_routes_artifact/missing.png' })).statusCode,
     ).toBe(404);
-    // No directory listing (403 from @fastify/static with index off; 404 would be fine too).
-    expect([403, 404]).toContain(
-      (await app.inject({ url: '/artifacts/run_routes_artifact/' })).statusCode,
+    // Directory reads and `..` segments are refused by @fastify/static with a 403; they answer
+    // 404 so a probe learns nothing. Dotfiles are not served. Null bytes are a 400. Never a 500.
+    fs.writeFileSync(path.join(config.artifactsDir, '.gitkeep'), '');
+    for (const url of [
+      '/artifacts/',
+      '/artifacts/run_routes_artifact/',
+      '/artifacts/../agentproof.db',
+      '/artifacts/..%2Fagentproof.db',
+      '/artifacts/%2e%2e%2fagentproof.db',
+      '/artifacts/..%5Cagentproof.db',
+      '/artifacts/missions/../../agentproof.db',
+      '/artifacts/.gitkeep',
+    ]) {
+      const res = await app.inject({ url });
+      expect(res.statusCode, url).toBe(404);
+    }
+    expect((await app.inject({ url: '/artifacts/%00' })).statusCode).toBe(400);
+    await app.close();
+  });
+
+  it('keeps those statuses under a root error handler that turns every error into a 500', async () => {
+    // server.ts used to install exactly this handler after registerRoutes; the artifacts scope
+    // carries its own, so the refusals above stayed 403/400 in substance but surfaced as 500s.
+    const app = Fastify();
+    await registerRoutes(app);
+    app.setErrorHandler((err: unknown, _req, reply) => {
+      reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+    });
+    const dir = path.join(config.artifactsDir, 'run_routes_scope');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'report.md'), '# ok');
+    expect((await app.inject({ url: '/artifacts/run_routes_scope/report.md' })).statusCode).toBe(
+      200,
     );
-    expect((await app.inject({ url: '/artifacts/../agentproof.db' })).statusCode).not.toBe(200);
-    expect((await app.inject({ url: '/artifacts/..%2Fagentproof.db' })).statusCode).not.toBe(200);
+    expect((await app.inject({ url: '/artifacts/run_routes_scope/' })).statusCode).toBe(404);
+    expect((await app.inject({ url: '/artifacts/..%2Fagentproof.db' })).statusCode).toBe(404);
+    expect((await app.inject({ url: '/artifacts/%00' })).statusCode).toBe(400);
+    await app.close();
+  });
+});
+
+describe('registerErrorHandler', () => {
+  it('answers with the status the error carries and 500 otherwise', async () => {
+    const app = Fastify();
+    registerErrorHandler(app);
+    app.get('/teapot', async () => {
+      throw Object.assign(new Error('short and stout'), { statusCode: 418 });
+    });
+    app.get('/boom', async () => {
+      throw new Error('boom');
+    });
+    const teapot = await app.inject({ url: '/teapot' });
+    expect(teapot.statusCode).toBe(418);
+    expect(teapot.json()).toEqual({ error: 'short and stout' });
+    expect((await app.inject({ url: '/boom' })).statusCode).toBe(500);
+    await app.close();
+  });
+});
+
+describe('GET /runs/:id/events', () => {
+  it('sends the current status and closes at once when the run has already finished', async () => {
+    const app = await server();
+    const mission = { ...structuredClone(hoodieMission), id: 'mis_routes_sse' };
+    db.saveMission(mission);
+    const run: Run = {
+      ...structuredClone(alphaFailedRun),
+      id: 'run_routes_sse_finished',
+      missionId: mission.id,
+    };
+    db.saveRun(run);
+    const res = await withinMs(app.inject({ url: `/runs/${run.id}/events` }), 3000, 'event stream');
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toContain('text/event-stream');
+    expect(sseEvents(res.body)).toEqual([
+      expect.objectContaining({ type: 'status', runId: run.id, status: run.status }),
+    ]);
     await app.close();
   });
 });
@@ -263,7 +394,8 @@ describe('a browser run end to end (stubbed agent and store)', () => {
     };
     db.saveRun(run);
     const events: RunEvent[] = [];
-    const unsubscribe = subscribe(run.id, (event) => events.push(event));
+    const polled: PolledState[] = [];
+    const unsubscribe = recordPolled(run.id, events, polled);
     await executeRun(run.id);
     unsubscribe();
 
@@ -294,6 +426,13 @@ describe('a browser run end to end (stubbed agent and store)', () => {
     expect(events.some((e) => e.type === 'evidence' && e.evidence.kind === 'cart_state')).toBe(
       true,
     );
+    // The verdict and the report path are one write: a poller sees 'verifying' (with the
+    // checkpoints) while the narrator runs, never a verdict without a report.
+    expectReportWithVerdict(polled, `${run.id}/report.json`);
+    expect(polled.filter((p) => p.event === 'checkpoint').map((p) => p.status)).toEqual(
+      polled.filter((p) => p.event === 'checkpoint').map(() => 'verifying'),
+    );
+    expect(polled.find((p) => p.event === 'report')?.status).toBe('failed');
 
     let res = await app.inject({ url: `/runs/${run.id}/report` });
     expect(res.statusCode).toBe(200);
@@ -314,6 +453,25 @@ describe('a browser run end to end (stubbed agent and store)', () => {
       status: 'failed',
       model: 'grok-4.3',
     });
+    // Reads serve the file finishRun wrote: the same id again, the same id as the artifact.
+    // ?refresh=1 rebuilds, and the artifact follows.
+    const reportId = report.data!.id;
+    expect((await app.inject({ url: `/missions/${mission.id}/report` })).json().report.id).toBe(
+      reportId,
+    );
+    res = await app.inject({ url: `/artifacts/missions/${mission.id}/report.json` });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().id).toBe(reportId);
+    res = await app.inject({ url: `/missions/${mission.id}/report?refresh=1` });
+    expect(res.statusCode).toBe(200);
+    const refreshedId: string = res.json().report.id;
+    expect(refreshedId).not.toBe(reportId);
+    expect(
+      (await app.inject({ url: `/artifacts/missions/${mission.id}/report.json` })).json().id,
+    ).toBe(refreshedId);
+    expect((await app.inject({ url: `/missions/${mission.id}/report` })).json().report.id).toBe(
+      refreshedId,
+    );
 
     res = await app.inject({ url: `/missions/${mission.id}/report.md` });
     expect(res.statusCode).toBe(200);
@@ -334,6 +492,190 @@ describe('a browser run end to end (stubbed agent and store)', () => {
     expect(
       (await app.inject({ url: `/missions/${idle.id}` })).json().missionReportPath,
     ).toBeUndefined();
+    await app.close();
+  });
+
+  it('writes a report for a run whose browser session ends in an error, before the terminal status', async () => {
+    setLlmForTests(narrator());
+    vi.mocked(runBrowserAgent).mockImplementationOnce(async (mission, _config, _dir, cb) => {
+      cb.onStep({
+        index: 0,
+        at: new Date().toISOString(),
+        url: `${mission.storeUrl}/products/black-hoodie`,
+        action: { type: 'click', target: 'button:Add to cart', reason: 'Proceed with default' },
+        outcome: 'error',
+        outcomeDetail: 'Target page, context or browser has been closed',
+        durationMs: 50,
+        usage: STUB_USAGE,
+      });
+      return {
+        outcome: 'error' as const,
+        summary: 'Browser session crashed after step 0',
+        visitedUrls: [mission.storeUrl],
+        cookies: [],
+        usage: STUB_USAGE,
+        resolvedModel: 'grok-4.3',
+        provider: 'mock',
+        effort: 'low' as const,
+        stepsUsed: 1,
+        durationMs: 300,
+      };
+    });
+    const app = await server();
+    const mission = Mission.parse(
+      (await app.inject({ method: 'POST', url: '/missions/fixture', payload: { bug: 'A' } })).json()
+        .mission,
+    );
+    const run: Run = {
+      id: 'run_routes_e2e_error',
+      missionId: mission.id,
+      agent: { kind: 'alpha_semantic', viewport: { width: 1280, height: 800 }, headed: false },
+      status: 'queued',
+      label: 'original',
+      createdAt: new Date().toISOString(),
+      steps: [],
+      evidence: [],
+    };
+    db.saveRun(run);
+    const events: RunEvent[] = [];
+    const polled: PolledState[] = [];
+    const unsubscribe = recordPolled(run.id, events, polled);
+    await executeRun(run.id);
+    unsubscribe();
+
+    const finished = db.getRun(run.id)!;
+    expect(finished.status).toBe('error');
+    expect(finished.errorMessage).toBe('Browser session crashed after step 0');
+    expect(finished.claim?.outcome).toBe('error');
+    expect(finished.verification).toBeUndefined();
+    expect(finished.reportPath).toBe(`${run.id}/report.json`);
+    expect(finished.usage?.calls).toBe(STUB_USAGE.calls + 1); // the agent's call plus the narrator's
+    expectReportWithVerdict(polled, `${run.id}/report.json`);
+    const statuses = events.filter((e) => e.type === 'status').map((e) => e.status);
+    expect(statuses).toEqual(['running', 'error']);
+    expect(events.findIndex((e) => e.type === 'report')).toBeLessThan(
+      events.findIndex((e) => e.type === 'status' && e.status === 'error'),
+    );
+
+    const res = await app.inject({ url: `/runs/${run.id}/report` });
+    expect(res.statusCode).toBe(200);
+    const report = AgentReport.safeParse(res.json().report);
+    expect(report.success).toBe(true);
+    expect(report.data).toMatchObject({ status: 'error', checkpoints: [], runId: run.id });
+    expect(report.data?.steps).toHaveLength(1);
+    expect(report.data?.usage.calls).toBe(STUB_USAGE.calls + 1);
+    // An error is not a verdict: the mission report still waits for a finished run.
+    expect((await app.inject({ url: `/missions/${mission.id}/report` })).statusCode).toBe(404);
+    await app.close();
+  });
+
+  it('runs Gamma through the same finish path, with the claim the CLI records and no model cost', async () => {
+    const cart: ObservedCart = {
+      items: [
+        {
+          productId: 'HOODIE-001',
+          variantId: 'HOODIE-001-S',
+          name: 'Black Hoodie',
+          attributes: { color: 'black', size: 'S' },
+          unitPrice: 49,
+          quantity: 1,
+        },
+      ],
+      subtotal: 49,
+      currency: 'USD',
+      source: 'api',
+    };
+    const selectedVariant = {
+      id: 'HOODIE-001-M',
+      attributes: { color: 'black', size: 'M' },
+      price: 49,
+      inStock: true,
+    };
+    const notes = [
+      'Selected HOODIE-001-M from the live catalog.',
+      'Read back the cart using this run’s session cookie.',
+    ];
+    vi.mocked(runGamma).mockImplementationOnce(async () => ({
+      checkpoints: [
+        {
+          id: 'catalog_variant_resolves',
+          status: 'failed',
+          detail: 'Requested HOODIE-001-M; cart returned HOODIE-001-S.',
+          evidenceIds: [],
+        },
+      ],
+      cart,
+      catalogRecord: {
+        id: 'HOODIE-001',
+        slug: 'black-hoodie',
+        name: 'Black Hoodie',
+        category: 'apparel',
+        basePrice: 49,
+        variants: [selectedVariant],
+      },
+      selectedVariant,
+      checkoutReached: true,
+      notes,
+    }));
+    const app = await server();
+    const mission = Mission.parse(
+      (await app.inject({ method: 'POST', url: '/missions/fixture', payload: { bug: 'B' } })).json()
+        .mission,
+    );
+    const run: Run = {
+      id: 'run_routes_e2e_gamma',
+      missionId: mission.id,
+      agent: AgentConfig.parse({ kind: 'gamma_structured' }),
+      status: 'queued',
+      label: 'original',
+      createdAt: new Date().toISOString(),
+      steps: [],
+      evidence: [],
+    };
+    db.saveRun(run);
+    const events: RunEvent[] = [];
+    const polled: PolledState[] = [];
+    const unsubscribe = recordPolled(run.id, events, polled);
+    await executeRun(run.id);
+    unsubscribe();
+
+    const finished = db.getRun(run.id)!;
+    expect(finished.status).toBe('failed');
+    expect(finished.claim).toEqual({ outcome: 'done', summary: notes.join(' ') });
+    expect(finished.resolvedModel).toBe('none');
+    expect(finished.usage).toMatchObject({ calls: 0, estimatedCostUsd: 0 });
+    expect(finished.verification?.firstFailure?.id).toBe('cart_matches_variant');
+    expect(finished.evidence.map((e) => e.kind).sort()).toEqual([
+      'cart_state',
+      'catalog_record',
+      'network',
+    ]);
+    expectReportWithVerdict(polled, `${run.id}/report.json`);
+
+    const res = await app.inject({ url: `/runs/${run.id}/report` });
+    expect(res.statusCode).toBe(200);
+    const report = AgentReport.parse(res.json().report);
+    expect(report.agent).toMatchObject({
+      kind: 'gamma_structured',
+      model: 'none',
+      provider: 'none',
+    });
+    expect(report.claim).toEqual(finished.claim);
+    // Gamma's narrative is deterministic and now carries the stopping claim, as the CLI's does.
+    expect(report.narrative).toContain(`It stopped with done: ${notes.join(' ')}`);
+    const missionReport = MissionReport.parse(
+      (await app.inject({ url: `/missions/${mission.id}/report` })).json().report,
+    );
+    expect(missionReport.runs[0]).toMatchObject({
+      agentKind: 'gamma_structured',
+      claim: finished.claim,
+      model: 'none',
+    });
+    expect(missionReport.costComparison[0]).toMatchObject({
+      agentKind: 'gamma_structured',
+      estimatedCostUsd: 0,
+      relativeCost: 0,
+    });
     await app.close();
   });
 });

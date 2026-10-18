@@ -21,23 +21,38 @@ export function hostIsAllowed(url: string): boolean {
   }
 }
 
-/** Substrings that indicate a payment submission control. Never click these. */
+/**
+ * Text that indicates a payment submission control. Never click, type into or choose these.
+ * The anchored patterns run against the trimmed text and, for a role:name target such as
+ * "button:Pay", against the accessible name alone.
+ */
 const PAYMENT_PATTERNS = [
   /place\s*order/i,
   /pay\s*now/i,
   /submit\s*payment/i,
   /confirm\s*purchase/i,
   /buy\s*now/i,
+  /complete\s*(?:order|purchase)/i,
+  /confirm\s*order/i,
+  /submit\s*order/i,
+  /^pay$/i,
+  /^pay\s+[$€£\d]/i,
 ];
+
+/** "button:Pay" -> "Pay". */
+const ROLE_PREFIX = /^[a-z]+\s*:\s*/i;
 
 /**
  * True when a control's text (visible text, accessible name, value, or a role:name target)
- * reads like a payment submission. checkAction() applies it to click targets; the browser agent
- * applies it to the element under an x,y coordinate before a vision agent clicks it, since a
- * coordinate target carries no text for checkAction() to read.
+ * reads like a payment submission. checkAction() applies it to click and type targets and to
+ * both halves of a select (chooseOption's last rung clicks a button named after the value); the
+ * browser agent applies it to the element under an x,y coordinate before a vision agent clicks
+ * it, since a coordinate target carries no text for checkAction() to read.
  */
 export function isPaymentControl(text: string): boolean {
-  return PAYMENT_PATTERNS.some((p) => p.test(text));
+  const trimmed = text.trim();
+  const name = trimmed.replace(ROLE_PREFIX, '').trim();
+  return PAYMENT_PATTERNS.some((p) => p.test(trimmed) || p.test(name));
 }
 
 export type PolicyVerdict = { ok: true } | { ok: false; reason: string };
@@ -58,6 +73,17 @@ export function checkAction(
   }
   if (action.type === 'click' && isPaymentControl(action.target)) {
     return { ok: false, reason: 'Clicking a payment-submission control is never permitted' };
+  }
+  if (action.type === 'type' && isPaymentControl(action.target)) {
+    return { ok: false, reason: 'Typing into a payment-submission control is never permitted' };
+  }
+  // chooseOption() resolves the value through radio -> combobox -> button, so a select whose
+  // value (or group) names a payment control would click it.
+  if (
+    action.type === 'select' &&
+    (isPaymentControl(action.value) || isPaymentControl(action.target))
+  ) {
+    return { ok: false, reason: 'Selecting a payment-submission control is never permitted' };
   }
   return { ok: true };
 }

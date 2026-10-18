@@ -442,7 +442,7 @@ describe('renderAgentReportMarkdown', () => {
       "- **Outcome:** locator.selectOption: Timeout 5000ms exceeded. Call log: - waiting for getByRole('combobox', { name: 'Size' })\n",
     );
     expect(md).not.toContain('\nCall log:');
-    expect(md).toContain("| 1 | select \"M\" in combobox:Size | error | locator.selectOption:");
+    expect(md).toContain('| 1 | select "M" in combobox:Size | error | locator.selectOption:');
   });
 
   it('keeps the perceived block and the narrative verbatim', () => {
@@ -633,7 +633,9 @@ describe('buildMissionReport', () => {
     expect(md).toContain('| $0.012 | 1.0x |');
     expect(md).toContain('| $0.05 | 4.2x |');
     expect(md).toContain('| 0 | 0 / 0 | 0 | $0.00 | 0.0x |');
-    expect(md).toContain("Agent Sigma could, at $0.05 (estimated), 4.2x Agent Alpha's spend of $0.012");
+    expect(md).toContain(
+      "Agent Sigma could, at $0.05 (estimated), 4.2x Agent Alpha's spend of $0.012",
+    );
     expect(md).not.toContain('Agent Gamma could');
   });
 

@@ -7,6 +7,7 @@ import {
   type Evidence,
   type LlmUsage,
   type Mission,
+  type RunStep,
   type VerificationResult,
 } from '@agentproof/shared';
 import { verify, type VerificationInput } from '@agentproof/verifier';
@@ -84,7 +85,10 @@ export function cookieHeaderFor(storeUrl: string, cookies: CookieLike[]): string
 /**
  * GET /api/cart with the agent's session cookies, as the runner does after a browser run.
  * Returns the cart tagged `source: 'api'`, or undefined on any failure (HTTP error, redirect,
- * timeout, unparsable JSON). Never throws: a missing cart is "not verified", not a crash.
+ * timeout, unparsable JSON). Also undefined, without a request, when no cookie applies to the
+ * store host: the store would mint a fresh session and answer with an empty cart that says
+ * nothing about this run, and the cart checkpoints must then read "not verified", not "failed".
+ * Never throws: a missing cart is "not verified", not a crash.
  */
 export async function fetchCartWithCookies(
   storeUrl: string,
@@ -98,15 +102,13 @@ export async function fetchCartWithCookies(
     return undefined;
   }
   const cookieHeader = cookieHeaderFor(storeUrl, cookies);
+  if (!cookieHeader) return undefined;
   try {
     const response = await fetchImpl(url, {
       method: 'GET',
       redirect: 'error',
       signal: AbortSignal.timeout(CART_FETCH_TIMEOUT_MS),
-      headers: {
-        Accept: 'application/json',
-        ...(cookieHeader ? { Cookie: cookieHeader } : {}),
-      },
+      headers: { Accept: 'application/json', Cookie: cookieHeader },
     });
     if (!response.ok) return undefined;
     const body: unknown = await response.json();
@@ -130,9 +132,68 @@ export function browserRunEvidenceForCart(runId: string, cart: ObservedCart): Ev
   };
 }
 
-/** "black-hoodie" -> "black hoodie" */
+/** "black-hoodie" -> "black hoodie" (a malformed percent-escape is kept as is). */
 function slugToWords(slug: string): string {
-  return decodeURIComponent(slug).replace(/[-_]+/g, ' ').trim();
+  let decoded = slug;
+  try {
+    decoded = decodeURIComponent(slug);
+  } catch {
+    // keep the raw slug
+  }
+  return decoded.replace(/[-_]+/g, ' ').trim();
+}
+
+function words(text: string): string[] {
+  return text
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w.length > 0);
+}
+
+/**
+ * Does a product page slug name the mission's product? A token match, as Gamma matches catalog
+ * names: every slug word is in the product ("merino-socks" for "merino crew socks") or every
+ * product word is in the slug ("black-hoodie" for "black hoodie"). "grey-hoodie" does not match
+ * "black hoodie": the sides share a word but each has one the other lacks.
+ */
+export function productSlugMatches(slug: string, product: string): boolean {
+  const slugWords = words(slugToWords(slug));
+  const productWords = words(product);
+  if (slugWords.length === 0 || productWords.length === 0) return false;
+  const within = (a: string[], b: string[]) => a.every((w) => b.includes(w));
+  return within(slugWords, productWords) || within(productWords, slugWords);
+}
+
+/** The slug of a `/products/<slug>` pathname; undefined for any other path. */
+export function productSlugOf(pathname: string | undefined): string | undefined {
+  if (!pathname || !pathname.startsWith('/products/')) return undefined;
+  const slug = pathname.slice('/products/'.length).split('/')[0] ?? '';
+  return slug ? slug : undefined;
+}
+
+/** True when a URL or pathname is the product page of the mission's product. */
+export function productPathMatches(urlOrPath: string, product: string): boolean {
+  const pathname = urlOrPath.startsWith('/') ? urlOrPath : pathnameOf(urlOrPath);
+  const slug = productSlugOf(pathname);
+  return slug !== undefined && productSlugMatches(slug, product);
+}
+
+/**
+ * Screenshot evidence id of the first step observed on a page whose pathname satisfies `match`:
+ * the product page for product_discovered, /checkout for checkout_review_reached. Empty when no
+ * step was there, so a checkpoint never links the screenshot of some other page as its evidence.
+ */
+export function screenshotEvidenceForPage(
+  steps: RunStep[],
+  match: (pathname: string) => boolean,
+): string[] {
+  for (const step of steps) {
+    const pathname = pathnameOf(step.url);
+    if (pathname !== undefined && step.screenshotEvidenceId && match(pathname)) {
+      return [step.screenshotEvidenceId];
+    }
+  }
+  return [];
 }
 
 export interface BrowserVerificationArgs {
@@ -146,8 +207,10 @@ export interface BrowserVerificationArgs {
 
 /**
  * Verifier input from a browser run.
- *   productPage.found   a visited URL (or the final URL) is under /products/; name is the slug of
- *                       the last such URL as words.
+ *   productPage.found   a visited URL (or the final URL) is the page of the mission's product,
+ *                       by slug token match (productSlugMatches); name is the slug of the last
+ *                       matching page as words, or of the last product page visited when none
+ *                       matched, so the report still says where the agent went.
  *   checkoutReached     the final URL or a visited URL is /checkout AND the observed cart has at
  *                       least one item. The store redirects /checkout to /cart when the cart is
  *                       empty, so a checkout URL without a confirmed non-empty cart never counts.
@@ -155,12 +218,12 @@ export interface BrowserVerificationArgs {
 export function verificationInputFromBrowserRun(args: BrowserVerificationArgs): VerificationInput {
   const { mission, result, cart } = args;
   const urls = [...(result.visitedUrls ?? []), ...(result.finalUrl ? [result.finalUrl] : [])];
-  const productPaths = urls
-    .map(pathnameOf)
-    .filter((p): p is string => p !== undefined && p.startsWith('/products/'));
-  const lastProduct = productPaths[productPaths.length - 1];
-  const slug = lastProduct?.slice('/products/'.length).split('/')[0] ?? '';
-  const name = slug ? slugToWords(slug) : undefined;
+  const slugs = urls
+    .map((u) => productSlugOf(pathnameOf(u)))
+    .filter((s): s is string => s !== undefined);
+  const matching = slugs.filter((s) => productSlugMatches(s, mission.requirements.product));
+  const named = matching[matching.length - 1] ?? slugs[slugs.length - 1];
+  const name = named ? slugToWords(named) : undefined;
 
   const sawCheckout = urls.some((u) => pathnameOf(u) === '/checkout');
   const cartHasItems = (cart?.items.length ?? 0) > 0;
@@ -170,7 +233,7 @@ export function verificationInputFromBrowserRun(args: BrowserVerificationArgs): 
     ...(cart ? { cart } : {}),
     cartEvidenceIds: args.cartEvidenceIds ?? [],
     productPage: {
-      found: productPaths.length > 0,
+      found: matching.length > 0,
       ...(name ? { name } : {}),
       evidenceIds: args.productEvidenceIds ?? [],
     },

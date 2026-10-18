@@ -42,7 +42,7 @@ export const MAX_ATTEMPTS_PER_CONTROL = 2;
 
 /** The retry rule, verbatim in every system prompt. Encodes MAX_ATTEMPTS_PER_CONTROL = 2. */
 export const RETRY_RULE =
-  'If the same target has failed twice, do not try it a third time: continue with what the page offers and state the unmet requirement in your reason, or say fail if the page offers no way forward.';
+  "If the same target has failed twice, do not try it a third time: continue with what the page offers (for example, add the item with the page's current default selection) and state the unmet requirement in your reason, so that the verifier can inspect what the store actually sells; still reach the mission's milestone. Say fail only when the page offers no way forward at all.";
 
 const perceivesImage = (kind: AgentKind): boolean =>
   kind === 'beta_vision' || kind === 'sigma_hybrid';

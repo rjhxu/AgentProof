@@ -137,9 +137,9 @@ describe('systemPromptFor', () => {
 
   it('explains done and the retry rule for every kind', () => {
     expect(MAX_ATTEMPTS_PER_CONTROL).toBe(2);
-    expect(RETRY_RULE).toBe(
-      'If the same target has failed twice, do not try it a third time: continue with what the page offers and state the unmet requirement in your reason, or say fail if the page offers no way forward.',
-    );
+    expect(RETRY_RULE).toContain('If the same target has failed twice, do not try it a third time');
+    expect(RETRY_RULE).toContain("page's current default selection");
+    expect(RETRY_RULE).toContain('Say fail only when the page offers no way forward');
     for (const kind of [ALPHA, BETA, SIGMA]) {
       const p = systemPromptFor(kind);
       expect(p).toContain('Say done only when');

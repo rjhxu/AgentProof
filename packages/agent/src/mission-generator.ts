@@ -21,7 +21,10 @@ export async function generateMission(storeUrl: string, prompt: string): Promise
     system: SYSTEM,
     messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
     jsonSchema: toStrictJsonSchema(MissionDraft, 'mission_draft'),
-    maxTokens: 4096,
+    // Structured extraction only: low effort, but the cap includes reasoning tokens, so leave
+    // headroom for the whole MissionDraft object.
+    effort: 'low',
+    maxTokens: 8192,
   });
 
   if (response.json === undefined) {

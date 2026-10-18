@@ -66,33 +66,43 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/** How a run ends: the verifier's verdict, or 'error' when the agent's session failed before one. */
+type FinalStatus = 'passed' | 'failed' | 'error';
+
 /**
- * Verdict first, then the reports (W5, Zach).
+ * Report first, then the verdict (W5, Zach).
  *
- * The verdict is saved before the report is generated because the report reads run.status, but
- * the terminal status event is published after it: the SSE route closes the stream on
- * passed/failed, so clients would otherwise never see the 'report' event. Report failures are
- * logged and never change a verdict the verifier already reached. The mission report is rebuilt
- * last, once this run counts as finished.
+ * The stored status stays as it was ('verifying') while the report is built, so a client polling
+ * GET /runs/:id never sees passed/failed without a reportPath (GET /runs/:id/report would 404 in
+ * that window, which lasts as long as the narrator call). Everything else the run learned
+ * (verification, claim, usage) is persisted right away so pollers see the checkpoints meanwhile.
+ * The verdict and the report path are then saved in one write, the 'report' event goes out, and
+ * the terminal 'status' event last: the SSE route closes the stream on a terminal status, so
+ * clients would otherwise never see 'report'. If the report cannot be written the verdict is
+ * saved anyway; report failures never change a verdict the verifier already reached. The mission
+ * report is rebuilt last, once this run counts as finished (error runs do not).
  */
 async function finishRun(
   run: Run,
   mission: Mission,
-  verdict: 'passed' | 'failed',
+  verdict: FinalStatus,
   extra: Partial<Run>,
 ): Promise<Run> {
-  run = { ...run, ...extra, status: verdict, finishedAt: nowIso() };
-  saveRun(run);
+  const pending: Run = { ...run, ...extra };
+  saveRun(pending);
+  const finished: Run = { ...pending, status: verdict, finishedAt: nowIso() };
+  let saved = finished;
   try {
-    const { relativeJsonPath, narrativeUsage } = await generateRunReport(run, mission);
-    run = {
-      ...run,
+    const { relativeJsonPath, narrativeUsage } = await generateRunReport(finished, mission);
+    saved = {
+      ...finished,
       reportPath: relativeJsonPath,
-      usage: addUsage(run.usage ?? EMPTY_USAGE, narrativeUsage),
+      usage: addUsage(finished.usage ?? EMPTY_USAGE, narrativeUsage),
     };
-    saveRun(run);
+    saveRun(saved);
     publish({ type: 'report', runId: run.id, reportPath: relativeJsonPath, at: nowIso() });
   } catch (err) {
+    saveRun(saved);
     console.error(`[jobs] run ${run.id}: report generation failed`, err);
     publish({
       type: 'log',
@@ -102,12 +112,14 @@ async function finishRun(
     });
   }
   publish({ type: 'status', runId: run.id, status: verdict, at: nowIso() });
-  try {
-    await regenerateMissionReport(run.missionId);
-  } catch (err) {
-    console.error(`[jobs] mission ${run.missionId}: mission report regeneration failed`, err);
+  if (verdict !== 'error') {
+    try {
+      await regenerateMissionReport(run.missionId);
+    } catch (err) {
+      console.error(`[jobs] mission ${run.missionId}: mission report regeneration failed`, err);
+    }
   }
-  return run;
+  return saved;
 }
 
 export async function executeRun(runId: string, missionOverride?: Mission): Promise<void> {
@@ -133,9 +145,16 @@ export async function executeRun(runId: string, missionOverride?: Mission): Prom
       for (const entry of evidence) publish({ type: 'evidence', runId, evidence: entry });
       for (const checkpoint of verification.checkpoints)
         publish({ type: 'checkpoint', runId, checkpoint });
+      // The same stopping claim the CLI records for Gamma (packages/agent/src/cli.ts), so both
+      // entry points produce one report. Never a verdict: the verifier decided above.
+      const claim: AgentClaim = {
+        outcome: 'done',
+        summary: result.notes.join(' ') || 'Inspected the catalog feed and the cart API.',
+      };
       // Gamma runs no model: "none" and a zero cost line keep it out of the cost ratio (W5).
       run = await finishRun(run, mission, overallStatus(verification), {
         verification,
+        claim,
         resolvedModel: 'none',
         usage: { ...EMPTY_USAGE, estimatedCostUsd: 0 },
       });
@@ -172,10 +191,12 @@ export async function executeRun(runId: string, missionOverride?: Mission): Prom
     };
 
     if (result.outcome === 'error') {
-      run = setStatus(run, 'error', {
+      // The browser session failed before a verdict was possible: nothing is verified, but the
+      // step log, usage and narrative still become a report, so the run and what it cost are on
+      // record (GET /runs/:id/report) instead of vanishing.
+      run = await finishRun(run, mission, 'error', {
         ...agentFields,
         errorMessage: result.summary,
-        finishedAt: nowIso(),
       });
       return;
     }
