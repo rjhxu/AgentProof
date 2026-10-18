@@ -1,10 +1,50 @@
 # Implementation plan: Alpha, Beta, Sigma, human replay, cross-agent attribution
 
-Status: **planned, not started.** Written 2026-10-17 after rebasing onto Ryan's storefront PR and reviewing Vihan's unmerged branch. Branch for this work: `abg-agents-impl`.
+## Status (2026-10-17, evening)
+
+**Implemented on `abg-agents-impl`, not yet merged.** Alpha, Beta and Sigma share one browser loop with evidence capture; Gamma is Vihan's deterministic inspector; reports, attribution, the runner wiring, the CLI and a scripted harness exist. The whole workspace typechecks and 333 tests pass. Gamma through the CLI and the scripted Alpha run reproduce the Bug A outcome against the live store. Live model-driven runs on bug A (Anthropic key): Alpha on Haiku fails on the missing size control (~$0.002), Beta on Haiku passes by clicking the chips (~$0.003), Sigma on Sonnet passes (~$0.05).
+
+Section 0 describes what exists and wins over sections 1 to 12, which are the original design, kept for reference. [AGENTS.md](./AGENTS.md) describes the agents as built.
+
+Left to do: live runs of Alpha, Beta and Sigma on bugs A to E once credits exist, and prompt tuning from those runs; then, by Zach's list, a separate repo for the storefront, the code-fix agent (consumes the reports plus Vihan's repository connection), the final dashboard, and the demo recording.
 
 Read first: [AGENTS.md](./AGENTS.md) (what the agents are), [storefront/bugs-and-fixes.md](./storefront/bugs-and-fixes.md) (the five planted bugs and their expected results).
 
 ---
+
+## 0. What exists (2026-10-17): implementation on `abg-agents-impl`
+
+**Provider: Anthropic (team key), xAI kept as an alternative.** The team first had an xAI hackathon key, which authenticated but had no credits, and switched to an Anthropic key on the evening of 2026-10-17 (`ANTHROPIC_API_KEY` in `.env`). All model calls go through a provider-neutral layer: types in `packages/agent/src/llm-types.ts`, adapters in `packages/agent/src/llm.ts`. The Anthropic adapter uses `output_config.format` for strict JSON-schema output and `output_config.effort` for effort; the xAI adapter uses the Responses API (`XAI_API_MODE=responses`, default; `chat` for the legacy endpoint) with strict JSON-schema output, base64 image input, and per-request cost from `usage.cost_in_usd_ticks`; `XAI_BASE_URL` points it at a gateway. `createMockLlm()` scripts responses for tests. `AGENTPROOF_LLM_PROVIDER=xai|anthropic` forces a provider, otherwise the keys decide. Output caps are effort-aware (8192 for medium and high, 4096 otherwise) because the cap includes reasoning tokens. Nothing outside `llm.ts` touches a provider.
+
+**Cost rule (Zach):** the cheapest model everywhere, Sonnet only for Sigma. Anthropic defaults: `claude-haiku-5-5` for Alpha, Beta, the narrator and the mission generator; `claude-sonnet-5-5` for Sigma; nothing defaults to Opus. The xAI column below is what applies when an xAI key is used instead.
+
+**Models are tiered on purpose** (Zach's call, to embody the thesis that a store should work for the cheapest agent), in `packages/agent/src/profiles.ts`, with env overrides `AGENTPROOF_MODEL_<ALPHA|BETA|SIGMA|NARRATOR|MISSION>` and a global `AGENTPROOF_MODEL`:
+
+| Role                        | Default model                             | Effort | Why                                                                       |
+| --------------------------- | ----------------------------------------- | ------ | ------------------------------------------------------------------------- |
+| Alpha (semantic, text only) | `grok-4.3`                                | low    | The cheap path. If the store needs more than this, it is not agent-ready. |
+| Beta (vision)               | `grok-4.3`, screenshots at `detail: high` | medium | Same model, more expensive input (image tokens).                          |
+| Sigma (hybrid reference)    | `grok-4.7`                                | high   | The strongest agent, all senses. Shows what the ceiling costs.            |
+| Narrator (report prose)     | `grok-4.20-0309-non-reasoning`            | n/a    | Cheapest; no reasoning tokens.                                            |
+| Mission generator           | `grok-4.3`                                | low    | Structured extraction only.                                               |
+
+Anthropic defaults are `claude-haiku-5-5` for everything but Sigma (`claude-sonnet-5-5`). Every call records `LlmUsage` (tokens, image inputs, cost), summed per run (narrator included) and compared across agents in the mission report. That comparison is the thesis in numbers.
+
+**The loop** (`packages/agent/src/browser-agent.ts`, one loop for Alpha, Beta and Sigma): observe (what the profile says the kind perceives), decide (one `getLlm()` call, strict JSON for the flat `AgentActionDraft`, `toAgentAction()` converts), police (`checkAction()`; for an `x,y` target also the text of the element under the point, so a vision agent cannot click a payment control the policy could not read), act (role targets via `getByRole(role, { name, exact: true })`, coordinates via the mouse, the `chooseOption()` radio -> combobox -> button ladder and `setQuantity()`), record (`RunStep` + evidence). Target grammars: Alpha `role:name` only, Beta `x,y` only, Sigma both (`targets.ts`). The prompt's two-attempt retry rule (`MAX_ATTEMPTS_PER_CONTROL = 2`) sits below the loop's five-strike stuck cutoff (`STUCK_STEP_LIMIT = 5`) so Alpha continues with the default size on Bug A instead of failing with an empty cart. Coordinate typing flattens line breaks so Enter can never submit a form; mouse clicks wait for a navigation to commit. Evidence per step under `data/artifacts/<runId>/`: `step-NNN.png` (every kind), `step-NNN.aria.txt` (whenever the tree was captured), `trace.zip` on close. A model-client failure leaves a referenced error step, never orphaned evidence. The run returns outcome, summary, final URL, visited URLs, cookies, usage, model, provider, effort, steps and duration; the runner or CLI then reads the cart with the cookies and calls the verifier (`assess.ts`).
+
+**Reports are the hand-off to the code-fix agent.** Two schemas in `packages/shared/src/report.ts`: `AgentReport` (one per run: the agent's senses, the verifier's checkpoints, the step log with screenshot and snapshot paths, the failure point with what the agent perceived there, the agent's own narrative labelled as such, usage and cost) and `MissionReport` (one per mission: every agent side by side, a checkpoint x agent matrix, deterministic attribution per failed checkpoint, cost comparison with relative cost, headline, recommendations). Builders and Markdown renderers are in `packages/agent/src/report.ts`; the narrator (`narrative.ts`) falls back to deterministic text and runs under a 15 s / 20 s budget in the runner. Both are written as `report.json` and `report.md` under `data/artifacts/` (`<runId>/`, `missions/<missionId>/`) and served by the runner: `GET /runs/:id/report(.md)`, `GET /missions/:id/report(.md)` (cached; `?refresh=1` rebuilds), `GET /artifacts/*`. `POST /missions/fixture { bug }` inserts a scenario mission without a model call. The runner saves the verdict and the report path in one write and emits the terminal status last, so a poller never sees a finished run without its report; errored runs get a report too.
+
+**Attribution is implemented** in `packages/verifier/src/attribute.ts` (deterministic; Sigma is the reference, Beta the fallback; a Sigma failure means the store is broken for every agent; Gamma is judged against any browser agent that passed). `recommendationsFrom()` turns categories into what the store must change for the cheapest agent.
+
+**Commands.** `pnpm llm:smoke` (provider and key); `pnpm cli -- --agent alpha|beta|sigma|gamma --bug A|B|C|D|E|control [--headed] [--prompt "..."]` (one agent, one scenario, report under `data/artifacts/cli/<runId>`; exit 0 on a verdict, 1 on an errored run, 2 on bad arguments); `pnpm --filter @agentproof/agent exec tsx --env-file-if-exists=../../.env scripts/scripted-run.ts alpha A` (the real browser loop driven by a scripted mock model: validates the harness without tokens and is the deterministic fallback for the demo); `node docs/storefront/verify-scenarios.mjs --expect=bugs` (the store grader).
+
+**Validation state.** `pnpm -r --no-bail typecheck` is green; `pnpm -r --no-bail test` passes 333 tests (agent 281, runner 34, verifier 14, shared 4). Gamma through the CLI and the scripted Alpha run reproduce the documented Bug A outcome against the live store (two failed size attempts, size S in the cart, checkout reached, `correct_size_identified` and `cart_matches_variant` fail). Live model-driven runs on bug A with the Anthropic key: Alpha (`claude-haiku-5-5`) failed as documented, Beta (`claude-haiku-5-5`, screenshots) and Sigma (`claude-sonnet-5-5`) passed; costs ~$0.002 / ~$0.003 / ~$0.05.
+
+**Decisions.** Stagehand was assessed and rejected for Sigma (v4 has no autonomous agent and no native Grok support), so Sigma is a branch of our own loop with all three senses. Human replay is deferred (Sigma is the reference; Ryan's grader already proves a mouse user succeeds). Gamma stays Vihan's deterministic implementation and gets a report like the others.
+
+**Lessons worth keeping.** Code inside `page.evaluate()` must not define name-inferred inner functions (`const f = () => ...`): tsx runs esbuild with `keepNames` and injects a `__name` helper that does not exist in the page; vitest does not, so only a live run catches it. The profile's `imageDetail` is not yet plumbed into `LlmRequest`; behaviour is correct because the xAI adapter defaults to `high`.
+
+**Left to do.** Live runs of Alpha, Beta and Sigma on bugs A to E once credits exist, then prompt tuning from those runs. By Zach's instruction, afterwards: a separate repo for the storefront, the code-fix agent (consumes the reports plus Vihan's repository connection), the final dashboard, the demo recording.
 
 ## 1. Decisions already made
 
@@ -153,7 +193,7 @@ export function toLocator(page: Page, t: ParsedTarget & { kind: 'role' }): Locat
 - `runBrowserAgent(mission, config, artifactDir, cb)`:
   1. `openSession`, `page.goto(mission.storeUrl)`.
   2. For `i < mission.maxSteps`: observe → decide → `checkAction(mission, action, i)`; if rejected, record a step with `outcome: 'rejected_by_policy'` and continue. Otherwise try `act`; on throw record `outcome: 'error'` with the message and capture a `dom_snapshot` evidence (aria snapshot) so the diagnosis has it. Screenshot to `artifactDir/step-NNN.png`, emit as `Evidence { kind: 'screenshot', path }`. Emit the `RunStep` via `cb.onStep`.
-  3. Three consecutive errors ⇒ outcome `fail`. `done` / `fail` ⇒ break.
+  3. Five consecutive errors ⇒ outcome `fail`. `done` / `fail` ⇒ break.
   4. `closeSession` saves `trace.zip`, emit as evidence. Read `context.cookies()`.
   5. Return `{ outcome, summary, finalUrl, cookies, visitedUrls }`. Extend `BrowserAgentResult` with the last three fields.
 

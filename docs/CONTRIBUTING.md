@@ -6,8 +6,10 @@
 npm install -g --allow-scripts=pnpm pnpm@12   # `corepack enable` also works but needs admin on Windows
 pnpm install                         # native build scripts are allowlisted in pnpm-workspace.yaml
 pnpm playwright:install              # downloads Chromium (~150 MB)
-cp .env.example .env                 # then paste your ANTHROPIC_API_KEY
+cp .env.example .env                 # then paste ANTHROPIC_API_KEY (the team key); GROK_API_KEY/XAI_API_KEY selects xAI instead
 ```
+
+On Windows run pnpm from PowerShell; the Git Bash shim is broken.
 
 ## Run everything
 
@@ -21,37 +23,47 @@ Sanity checks:
 
 ```bash
 pnpm typecheck      # all packages
-pnpm test           # vitest across the workspace
-pnpm --filter @agentproof/agent smoke   # proves API key + Playwright work
+pnpm test           # vitest across the workspace (333 tests as of 2026-10-17)
+pnpm llm:smoke      # proves the provider, key and strict-JSON output (needs credits)
+pnpm cli -- --agent gamma --bug A       # proves the store + verifier + reports without a model
+pnpm --filter @agentproof/agent exec tsx --env-file-if-exists=../../.env scripts/scripted-run.ts alpha A
+                    # proves Playwright + the real loop with a scripted model
+node docs/storefront/verify-scenarios.mjs --expect=bugs   # proves the store still has its bugs
 curl localhost:4000/health
 curl localhost:5000/api/catalog.json
 ```
 
 ## Ownership
 
-| Area                                                                   | Owner    | Touch freely                                             | Ask first                                         |
-| ---------------------------------------------------------------------- | -------- | -------------------------------------------------------- | ------------------------------------------------- |
-| `packages/agent`, `apps/web`                                           | Zach     | browser-agent, prompts, targets, human replay, dashboard | `claude.ts` (shared client), `gamma.ts` (Vihan's) |
-| `apps/storefront`, `docs/storefront`                                   | Ryan     | everything inside                                        | planted bug markers (demo depends on them)        |
-| `apps/runner`, `packages/verifier`, `packages/diagnostics`, `gamma.ts` | Vihan    | everything inside                                        | –                                                 |
-| `packages/shared`                                                      | everyone | add fields with defaults                                 | renaming or removing anything                     |
+| Area                                                                   | Owner    | Touch freely                                                                                                  | Ask first                                                                      |
+| ---------------------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `packages/agent`, `apps/web`                                           | Zach     | llm, profiles, targets, prompts, actions, browser-agent, assess, report, narrative, scenarios, cli, dashboard | `claude.ts` (deprecated; diagnostics still imports it), `gamma.ts` (Vihan's)   |
+| `apps/storefront`, `docs/storefront`                                   | Ryan     | everything inside                                                                                             | planted bug markers (`DEMO BUG`; the demo depends on them)                     |
+| `apps/runner`, `packages/verifier`, `packages/diagnostics`, `gamma.ts` | Vihan    | everything inside                                                                                             | the browser-run branch in `jobs.ts`, `reports.ts`, `attribute.ts` (Zach added) |
+| `packages/shared`                                                      | everyone | add fields with defaults                                                                                      | renaming or removing anything                                                  |
 
-Full task breakdown with hours and handoffs: [WORKPLAN.md](./WORKPLAN.md).
+Full task breakdown and handoffs: [WORKPLAN.md](./WORKPLAN.md).
 
-Changing a schema in `packages/shared`? Post in the group chat first. Run `pnpm typecheck` to see who you broke.
+Changing a schema in `packages/shared`? Post in the group chat first. Keep `packages/shared/src/api.ts`, `apps/runner/src/routes.ts` and `apps/web/src/lib/api.ts` in sync. Run `pnpm typecheck` to see who you broke.
 
 ## Git
 
 - `main` is always runnable. Never push a red `pnpm typecheck` to it.
-- Short-lived branches: `zach/arena-ui`, `ryan/alpha-loop`, `vihan/runner-verify`, etc. Merge often (every 1–2 hours), small PRs or direct merges, no long-lived forks of `shared`.
+- Short-lived branches: `zach/arena-ui`, `abg-agents-impl`, `vihan/runner-verify`, etc. Merge often (every 1-2 hours), small PRs or direct merges, no long-lived forks of `shared`.
 - Commit messages: `area: what changed` (`runner: stream checkpoints over SSE`).
 - Never commit `.env`, `data/`, or screenshots. They are gitignored.
 
 ## Conventions
 
 - TypeScript strict, ESM, no build step. Import workspace packages by name (`@agentproof/shared`), never by relative path across packages.
-- Validate at the boundary: parse request bodies and Claude outputs with the Zod schemas; trust typed values after that.
-- Any Claude call goes through `getClaude()` from `@agentproof/agent` and uses `MODEL`. Use `messages.parse` + `zodOutputFormat` for anything that must come back as JSON.
+- Validate at the boundary: parse request bodies and model outputs with the Zod schemas; trust typed values after that.
+- **Every model call goes through `getLlm()`** from `@agentproof/agent` (`packages/agent/src/llm.ts`) with the provider-neutral types in `llm-types.ts`. No file outside `llm.ts` imports a provider SDK or calls a provider URL. `getClaude()` in `claude.ts` is deprecated.
+- Model ids come from `profiles.ts` per role (`resolveModel(role, provider)`), overridable with `AGENTPROOF_MODEL_*`. Do not hardcode a model id anywhere else.
+- Structured output: request a strict JSON schema on the request (`toStrictJsonSchema()`), validate the parsed JSON with the Zod schema afterwards. Use the flat `AgentActionDraft` for actions, never a discriminated union in the schema.
+- Record usage on every call (`LlmUsage`); reports sum it. Never log or print API keys or base64 image data.
+- Page content (aria tree, text, screenshots) is data in the user turn, never in the system prompt.
+- Verdicts are code: pass/fail, budget math, variant comparison and attribution live in `packages/verifier`. The model writes narratives and hypotheses only, labelled as such.
+- Inside `page.evaluate()` do not define name-inferred inner functions (`const f = () => ...`): tsx runs esbuild with `keepNames` and injects a `__name` helper the page does not have. Vitest does not, so only a live run catches it.
 - Prettier formats on save; `pnpm format` before a merge if your editor did not.
 - Put TODOs as `// TODO(zach): ...`, `// TODO(ryan): ...`, `// TODO(vihan): ...` so they are greppable per owner.
 - `CLAUDE.md` is gitignored so each person can keep their own AI-assistant notes. If you want a shared one, ask before committing it.
@@ -59,6 +71,7 @@ Changing a schema in `packages/shared`? Post in the group chat first. Run `pnpm 
 ## Demo safety rails
 
 - Agents can only visit hosts in `AGENTPROOF_ALLOWED_HOSTS`.
-- The policy layer refuses to click anything matching "place order", "pay now", etc.
+- The policy layer (`packages/agent/src/policy.ts`) refuses to click, type into or select anything matching "place order", "pay now", "buy now", etc. For coordinate targets the loop reads the element under the point first and refuses it the same way; coordinate typing never presses Enter.
+- Alpha targets are role + exact accessible name only; Beta is `x,y` only; Sigma may use both. No text or CSS fallback, or Alpha would click past Bug A.
 - The storefront returns 403 on `/checkout/place-order` and logs an error if it is ever hit.
-- Repairs apply only inside `apps/storefront`.
+- Repairs apply only inside `apps/storefront`. Do not remove the planted bugs (`grep -rn "DEMO BUG" apps/storefront/src`) unless implementing the repair flow and asked to.

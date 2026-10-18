@@ -190,6 +190,9 @@ importers:
       '@fastify/cors':
         specifier: ^11.3.1
         version: 11.3.1
+      '@fastify/static':
+        specifier: ^8.2.0
+        version: 8.3.0
       fastify:
         specifier: ^5.12.7
         version: 5.12.7
@@ -286,6 +289,9 @@ importers:
       '@agentproof/shared':
         specifier: workspace:*
         version: link:../shared
+      '@agentproof/verifier':
+        specifier: workspace:*
+        version: link:../verifier
       '@anthropic-ai/sdk':
         specifier: ^0.135.0
         version: 0.135.0(zod@4.6.7)

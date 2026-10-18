@@ -12,6 +12,12 @@ import type {
   ApplyRepairResponse,
   ConnectRepositoryRequest,
   RepositoryResponse,
+  FixtureMissionRequest,
+  FixtureMissionResponse,
+  GetRunReportResponse,
+  GetMissionReportResponse,
+  Mission,
+  Run,
 } from '@agentproof/shared';
 
 /**
@@ -34,6 +40,14 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(body.error ?? `${res.status} ${res.statusText}`);
   }
   return (await res.json()) as T;
+}
+
+/** GET /missions/:id (no shared schema yet): the mission, its runs, and the mission report path once one exists. */
+export interface GetMissionResponse {
+  mission: Mission;
+  runs: Run[];
+  /** Artifacts-relative path of the cross-agent report JSON, e.g. "missions/mis_abc/report.json" */
+  missionReportPath?: string;
 }
 
 export const api = {
@@ -64,7 +78,45 @@ export const api = {
   diagnose: (runId: string) =>
     call<DiagnoseResponse>(`/runs/${runId}/diagnose`, { method: 'POST' }),
 
-  /** Subscribe to live run events. Returns an unsubscribe function. Browser only. */
+  // ---- scenarios, reports and artifacts (W5, Zach) ---------------------------------------------
+  /** Insert one of the storefront's known scenario missions (A-E, control); no model call. */
+  fixtureMission: (body: FixtureMissionRequest) =>
+    call<FixtureMissionResponse>('/missions/fixture', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  getMission: (missionId: string) => call<GetMissionResponse>(`/missions/${missionId}`),
+  /**
+   * 404 ("report not ready") while the run is in progress. jobs.ts saves the terminal status and
+   * reportPath together, so a run that polls as passed/failed/error has its report unless
+   * writing it failed (then the run carries the verdict and the log says why).
+   */
+  getRunReport: (runId: string) => call<GetRunReportResponse>(`/runs/${runId}/report`),
+  /**
+   * The report written when the mission's last run finished (same id as the report.json
+   * artifact); 404 until one has finished. `refresh` forces a rebuild from the mission's runs.
+   */
+  getMissionReport: (missionId: string, opts: { refresh?: boolean } = {}) =>
+    call<GetMissionReportResponse>(
+      `/missions/${missionId}/report${opts.refresh ? '?refresh=1' : ''}`,
+    ),
+  /** text/markdown rendering of the same run report, for "open as Markdown" links. */
+  runReportMarkdownUrl: (runId: string) => `${BASE}/runs/${runId}/report.md`,
+  missionReportMarkdownUrl: (missionId: string) => `${BASE}/missions/${missionId}/report.md`,
+  /** URL of an artifact (screenshot, aria snapshot, trace, report) by its artifacts-relative path. */
+  artifactUrl: (relativePath: string) =>
+    `${BASE}/artifacts/${relativePath
+      .replace(/\\/g, '/')
+      .replace(/^\/+/, '')
+      .split('/')
+      .map(encodeURIComponent)
+      .join('/')}`,
+
+  /**
+   * Subscribe to live run events. Returns an unsubscribe function. Browser only. The runner ends
+   * the stream after the terminal status (at once for a run that has already finished), which
+   * EventSource reports through onerror, so the source is closed rather than left reconnecting.
+   */
   subscribe(runId: string, onEvent: (e: RunEvent) => void): () => void {
     const es = new EventSource(`${BASE}/runs/${runId}/events`);
     es.onmessage = (msg) => onEvent(JSON.parse(msg.data) as RunEvent);

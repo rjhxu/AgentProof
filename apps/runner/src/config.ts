@@ -10,10 +10,24 @@ export const config = {
   get artifactsDir() {
     return path.join(this.dataDir, 'artifacts');
   },
+  /**
+   * Cross-agent mission reports: <artifactsDir>/missions/<missionId>/report.{json,md}. They live
+   * inside the artifacts dir so GET /artifacts/* serves them like every run report. (W5, Zach)
+   */
+  get missionReportsDir() {
+    return path.join(this.artifactsDir, 'missions');
+  },
   get dbPath() {
     return path.join(this.dataDir, 'agentproof.db');
   },
   /** Only this directory may receive applied repairs. */
   storefrontDir: path.join(REPO_ROOT, 'apps', 'storefront'),
+  /**
+   * Storefront base URL for fixture missions and the hoodie demo. STOREFRONT_URL wins (macOS
+   * usually holds :5000); otherwise localhost on STOREFRONT_PORT. (W5, Zach)
+   */
+  storeUrl:
+    process.env.STOREFRONT_URL?.trim() ||
+    `http://localhost:${process.env.STOREFRONT_PORT?.trim() || '5000'}`,
   maxConcurrentRuns: 2,
 };
