@@ -102,14 +102,6 @@ function IssueCard({ card }: { card: IssueCardData }) {
           </span>
         </Field>
         <Field label="What it cost">{card.cost}</Field>
-        {issue.inferredCause ? (
-          <Field label="Likely cause">
-            {issue.inferredCause}{' '}
-            <span className="whitespace-nowrap rounded bg-[var(--panel-2)] px-1.5 py-0.5 text-[11px] text-[var(--muted)]">
-              hypothesis{issue.confidence ? ` · ${issue.confidence} confidence` : ''}
-            </span>
-          </Field>
-        ) : null}
         {card.recommendation ? <Field label="Recommended">{card.recommendation}</Field> : null}
       </dl>
     </motion.article>
