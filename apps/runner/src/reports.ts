@@ -9,6 +9,7 @@ import {
   profileSummary,
   renderAgentReportMarkdown,
   renderMissionReportMarkdown,
+  resolveModel,
   runUsage,
   writeReportFiles,
   type LlmClient,
@@ -18,7 +19,9 @@ import {
   EMPTY_USAGE,
   MissionReport,
   addUsage,
+  type AgentConfig,
   type AgentKind,
+  type AgentProfileSummary,
   type LlmUsage,
   type Mission,
   type Run,
@@ -136,8 +139,29 @@ export function detectProvider(env: NodeJS.ProcessEnv = process.env): string {
   return 'xai';
 }
 
+/**
+ * The profile a run is labelled with the moment it is created (Run.agentSummary), before the loop
+ * has resolved anything: the kind's name and senses, the model the loop will resolve for it
+ * (agent.model, else the profile default for the detected provider, through the same
+ * resolveModel() the loop uses) and the effort. Gamma runs no model: 'none' for model and
+ * provider, as jobs.ts records once it has run. Same shape as AgentReport.agent.
+ */
+export function agentSummaryFor(agent: AgentConfig): AgentProfileSummary {
+  const { kind } = agent;
+  const effort = agent.effort ?? AGENT_PROFILES[kind].defaultEffort;
+  if (kind === 'gamma_structured') return profileSummary(kind, 'none', 'none', effort);
+  const provider = detectProvider();
+  const model = resolveModel(kind, provider === 'anthropic' ? 'anthropic' : 'xai', agent.model);
+  return profileSummary(kind, model, provider, effort);
+}
+
 function isFinished(run: Run): boolean {
   return run.status === 'passed' || run.status === 'failed';
+}
+
+/** The original attempt of an agent, never a rematch (a rerun against a repaired store). */
+function isOriginal(run: Run): boolean {
+  return run.label === 'original';
 }
 
 function oneLine(text: string, max = 300): string {
@@ -238,7 +262,8 @@ function withMissionLock<T>(missionId: string, task: () => Promise<T>): Promise<
 }
 
 /**
- * Rebuild the MissionReport from every run of the mission (deterministic, no model call).
+ * Rebuild the MissionReport from every original run of the mission (deterministic, no model
+ * call). Rematch runs describe a repaired store and are compared through compareRuns instead.
  * Undefined when the mission is unknown or no run has finished yet.
  */
 export async function regenerateMissionReport(
@@ -247,7 +272,7 @@ export async function regenerateMissionReport(
   const mission = db.getMission(missionId);
   if (!mission) return undefined;
   return withMissionLock(missionId, async () => {
-    const runs = db.listRuns(missionId);
+    const runs = db.listRuns(missionId).filter(isOriginal);
     if (!runs.some(isFinished)) return undefined;
     const agentReports = runs.flatMap((run) => {
       const report = readRunReport(run);
@@ -271,7 +296,9 @@ export interface MissionReportReadOptions {
 
 /** A run finished after the report was generated. Both timestamps are nowIso(), so they compare as strings. */
 function missionReportIsStale(report: MissionReport, runs: Run[]): boolean {
-  return runs.some((run) => isFinished(run) && (run.finishedAt ?? '') > report.generatedAt);
+  return runs.some(
+    (run) => isOriginal(run) && isFinished(run) && (run.finishedAt ?? '') > report.generatedAt,
+  );
 }
 
 /**

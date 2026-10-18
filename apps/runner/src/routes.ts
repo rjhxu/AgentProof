@@ -1,7 +1,16 @@
 import fs from 'node:fs';
 import type { FastifyInstance } from 'fastify';
 import fastifyStatic from '@fastify/static';
-import { generateMission, scenarioMission } from '@agentproof/agent';
+import {
+  MissionDerivationError,
+  STORE_ADDRESS_HELP,
+  allowedHosts,
+  deriveMissionFromStore,
+  generateMission,
+  hostIsAllowed,
+  isHttpUrl,
+  scenarioMission,
+} from '@agentproof/agent';
 import { diagnose } from '@agentproof/diagnostics';
 import { compareRuns } from '@agentproof/verifier';
 import {
@@ -24,6 +33,7 @@ import { registerRepositoryRoutes } from './repository-routes';
 import { registerCodeFixRoutes } from './codefix-routes';
 import { registerGitHubAppRoutes } from './github-app-routes';
 import {
+  agentSummaryFor,
   currentMissionReport,
   missionReportExists,
   missionReportRelativePath,
@@ -46,23 +56,25 @@ export function isTerminalStatus(status: RunStatus): boolean {
 }
 
 /**
- * HTTP status of a thrown error. Fastify and its plugins carry it on `statusCode` (the http-errors
- * that @fastify/static forwards also on `status`); anything else is a 500.
+ * HTTP status of a thrown error. Fastify, its plugins and the http-errors that @fastify/static
+ * forwards carry it on `statusCode`; anything else is a 500. `status` is never read: an LlmError
+ * carries the provider's HTTP status there, and a provider's 429 or 529 is not this runner's answer.
  */
 export function errorStatus(err: unknown): number {
   if (typeof err === 'object' && err !== null) {
-    for (const key of ['statusCode', 'status'] as const) {
-      const value = (err as Record<string, unknown>)[key];
-      if (typeof value === 'number' && Number.isInteger(value) && value >= 400 && value < 600)
-        return value;
-    }
+    const value = (err as { statusCode?: unknown }).statusCode;
+    if (typeof value === 'number' && Number.isInteger(value) && value >= 400 && value < 600)
+      return value;
   }
   return 500;
 }
 
 /**
  * JSON error replies that keep the error's own status, so a 4xx raised by a plugin or by
- * validation stays a 4xx instead of becoming a 500. For the root app (server.ts) and the test app.
+ * validation stays a 4xx instead of becoming a 500. For the root app (server.ts) and the test app,
+ * and it must run before registerRoutes(): Fastify binds each route to the error handler in force
+ * when the route's registration settles (its after() tick), so a handler set later never reaches
+ * the routes already registered.
  */
 export function registerErrorHandler(app: FastifyInstance): void {
   app.setErrorHandler((err: unknown, _req, reply) => {
@@ -102,12 +114,31 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // ---- missions ---------------------------------------------------------------
+  // With a prompt the model structures it; without one the mission is derived from the store's
+  // own product feed with no model call (packages/agent/src/mission-derive.ts). Either way the
+  // store address is checked first: an http(s) URL on a host this runner may visit.
   app.post('/missions', async (req, reply) => {
     const body = CreateMissionRequest.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: body.error.message });
-    const mission = await generateMission(body.data.storeUrl, body.data.prompt);
-    db.saveMission(mission);
-    return { mission };
+    const { storeUrl, prompt } = body.data;
+    if (!isHttpUrl(storeUrl)) return reply.code(400).send({ error: STORE_ADDRESS_HELP });
+    if (!hostIsAllowed(storeUrl)) {
+      return reply.code(400).send({
+        error: `Only these store hosts are allowed on this runner: ${allowedHosts().join(', ')}.`,
+      });
+    }
+    try {
+      const mission =
+        prompt === undefined
+          ? await deriveMissionFromStore(storeUrl)
+          : await generateMission(storeUrl, prompt);
+      db.saveMission(mission);
+      return { mission };
+    } catch (err) {
+      if (err instanceof MissionDerivationError)
+        return reply.code(err.statusCode).send({ error: err.message });
+      throw err;
+    }
   });
 
   // One of the storefront's known scenarios (A-E, control), no model call. (W5, Zach)
@@ -138,16 +169,21 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     const body = StartRunsRequest.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: body.error.message });
 
-    const runs: Run[] = body.data.agents.map((kind) => ({
-      id: newId('run'),
-      missionId: mission.id,
-      agent: AgentConfig.parse({ kind }),
-      status: 'queued',
-      label: 'original',
-      createdAt: nowIso(),
-      steps: [],
-      evidence: [],
-    }));
+    const runs: Run[] = body.data.agents.map((kind) => {
+      const agent = AgentConfig.parse({ kind });
+      return {
+        id: newId('run'),
+        missionId: mission.id,
+        agent,
+        // The lane label before any report exists: name, senses, the model it will run on.
+        agentSummary: agentSummaryFor(agent),
+        status: 'queued',
+        label: 'original',
+        createdAt: nowIso(),
+        steps: [],
+        evidence: [],
+      };
+    });
     for (const run of runs) {
       db.saveRun(run);
       enqueue(run.id);
@@ -247,6 +283,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       id: newId('run'),
       missionId: original.missionId,
       agent: original.agent,
+      agentSummary: agentSummaryFor(original.agent),
       status: 'queued',
       label: 'rematch',
       parentRunId: original.id,

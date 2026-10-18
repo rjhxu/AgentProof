@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import {
+  AGENT_LABELS,
   CodeFixOptions,
   EMPTY_USAGE,
   addUsage,
@@ -61,7 +62,7 @@ import * as db from './db';
 import { publishCodeFix, subscribe } from './events';
 import { resolveGitHubCredential, githubAppState } from './github-app';
 import { enqueue } from './jobs';
-import { readMissionReport, readRunReport } from './reports';
+import { agentSummaryFor, readMissionReport, readRunReport } from './reports';
 import { commitAndPush, createWorktree, readSnapshotFile, removeWorktree } from './repositories';
 
 /**
@@ -248,11 +249,25 @@ function writeArtifacts(state: FixState): void {
 }
 
 function finish(state: FixState, status: 'succeeded' | 'failed', error?: string): void {
+  // A branch or pull-request fix that dies before deliver would otherwise leave its delivery
+  // pending for good, and the dashboard with a spinner.
+  const { delivery } = state.fix;
+  const undelivered =
+    status === 'failed' && delivery.status === 'pending'
+      ? {
+          delivery: {
+            ...delivery,
+            status: 'failed' as const,
+            error: error ?? 'not delivered: the fix did not complete',
+          },
+        }
+      : {};
   state.patch({
     status,
     stage: 'done',
     finishedAt: nowIso(),
     ...(error ? { error } : {}),
+    ...undelivered,
   });
   writeArtifacts(state);
   // Clear before the done event, so a client that reacts to `done` can start the next fix.
@@ -615,6 +630,21 @@ async function review(state: FixState, c: Collected): Promise<void> {
 
 // ---- rematch: a real rerun against the patched store -----------------------------------------
 
+/** The JavaScript entry behind the `tsx` bin of an installed tsx package, or undefined. */
+function tsxEntry(packageDir: string): string | undefined {
+  try {
+    const manifest = JSON.parse(fs.readFileSync(path.join(packageDir, 'package.json'), 'utf8')) as {
+      bin?: string | Record<string, string>;
+    };
+    const bin = typeof manifest.bin === 'string' ? manifest.bin : manifest.bin?.tsx;
+    if (!bin) return undefined;
+    const entry = path.join(packageDir, bin);
+    return fs.existsSync(entry) ? entry : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
@@ -700,9 +730,10 @@ async function rematch(
     const install = await installDependencies(storeDir);
     if (install.status === 'failed')
       throw new Error(`dependency install failed: ${install.detail}`);
-    const bin = process.platform === 'win32' ? 'tsx.cmd' : 'tsx';
-    const tsx = path.join(storeDir, 'node_modules', '.bin', bin);
-    if (!fs.existsSync(tsx)) {
+    // tsx's own entry point under this node, so the spawn is the same on every platform: Windows
+    // refuses to spawn a .cmd shim without a shell (EINVAL), and no shell is wanted here.
+    const tsxCli = tsxEntry(path.join(storeDir, 'node_modules', 'tsx'));
+    if (!tsxCli) {
       throw new Error('tsx is not installed in the repository, so the patched store cannot boot');
     }
     const entry = ['src/server.ts', 'src/index.ts', 'server.ts', 'index.ts'].find((e) =>
@@ -713,7 +744,7 @@ async function rematch(
     const storeUrl = `http://127.0.0.1:${port}`;
     // Repository code runs here and only here, by explicit request, in a child process with a
     // scrubbed environment (no API keys, no git or npm overrides), on a loopback port.
-    child = spawn(tsx, [entry], {
+    child = spawn(process.execPath, [tsxCli, entry], {
       cwd: storeDir,
       env: scrubbedEnv({ STOREFRONT_PORT: String(port), PORT: String(port), LOG_LEVEL: 'warn' }),
       stdio: ['ignore', 'ignore', 'pipe'],
@@ -729,6 +760,7 @@ async function rematch(
       id: newId('run'),
       missionId: c.mission.id,
       agent: c.run.agent,
+      agentSummary: agentSummaryFor(c.run.agent),
       status: 'queued',
       label: 'rematch',
       parentRunId: c.run.id,
@@ -739,14 +771,15 @@ async function rematch(
     db.saveRun(run);
     state.patch({ rematch: { runId: run.id, status: 'queued', storeUrl } });
     enqueue(run.id, { ...c.mission, storeUrl });
-    state.log(`rematch run ${run.id} started (${c.run.agent.kind})`);
+    const name = AGENT_LABELS[c.run.agent.kind].name;
+    state.log(`rematch run ${run.id} started (${name})`);
     const finished = await waitForTerminal(run.id, REMATCH_TIMEOUT_MS);
     const comparison = compareRuns(c.run, finished);
     const passed = finished.status === 'passed' && comparison.regressed === 0;
     const check: CodeFixCheck = {
       id: 'rematch',
       status: passed ? 'passed' : 'failed',
-      detail: `${c.run.agent.kind} ${finished.status} on the patched store: ${comparison.improved} improved, ${comparison.regressed} regressed, ${comparison.unchanged} unchanged`,
+      detail: `${name} ${finished.status} on the patched store: ${comparison.improved} improved, ${comparison.regressed} regressed, ${comparison.unchanged} unchanged`,
     };
     appendCheck(state, check);
     state.patch({ rematch: { runId: run.id, status: finished.status, storeUrl, comparison } });

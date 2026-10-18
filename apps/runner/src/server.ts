@@ -2,7 +2,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { config } from './config';
 import { getDb } from './db';
-import { registerRoutes } from './routes';
+import { registerErrorHandler, registerRoutes } from './routes';
 
 const app = Fastify({
   logger: {
@@ -13,13 +13,10 @@ const app = Fastify({
 
 await app.register(cors, { origin: true, methods: ['GET', 'HEAD', 'POST', 'DELETE'] });
 getDb(); // create tables + data dirs on boot
+// JSON errors that keep a 4xx raised by a plugin or by validation as a 4xx, never a 500. Before the
+// routes: Fastify binds each route to the error handler in force when its registration settles.
+registerErrorHandler(app);
 await registerRoutes(app);
-
-app.setErrorHandler((err: unknown, _req, reply) => {
-  app.log.error(err);
-  const message = err instanceof Error ? err.message : String(err);
-  reply.code(500).send({ error: message });
-});
 
 await app.listen({ port: config.port, host: '0.0.0.0' });
 app.log.info(`AgentProof runner on http://localhost:${config.port} (data: ${config.dataDir})`);

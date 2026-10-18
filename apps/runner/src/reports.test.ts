@@ -385,3 +385,42 @@ describe('regenerateMissionReport', () => {
     expect(markdown).toContain('Agent Sigma');
   });
 });
+
+describe('rematch runs and the mission report', () => {
+  it('builds the report from the original runs only; a finished rematch does not make it stale', async () => {
+    const mission = missionWithId('mis_reports_rematch');
+    db.saveMission(mission);
+    const alpha = alphaRun('run_reports_r_alpha', mission.id);
+    const sigma = sigmaPassedRun('run_reports_r_sigma', mission.id);
+    for (const run of [alpha, sigma]) {
+      const { relativeJsonPath } = await reports.generateRunReport(run, mission, {
+        narrativeLlm: narrator(),
+      });
+      db.saveRun({ ...run, reportPath: relativeJsonPath });
+    }
+    const before = await reports.currentMissionReport(mission.id);
+    expect(before?.report.runs.find((r) => r.agentKind === 'alpha_semantic')).toMatchObject({
+      runId: alpha.id,
+      status: 'failed',
+    });
+
+    // The code-fix agent reran Alpha against a patched store: a rematch, saved as its own run,
+    // finishing after the report was written. It describes the repaired store, not this scan.
+    const rematch: Run = {
+      ...alphaRun('run_reports_r_rematch', mission.id),
+      status: 'passed',
+      label: 'rematch',
+      parentRunId: alpha.id,
+      finishedAt: '2026-10-19T00:00:00.000Z',
+    };
+    db.saveRun(rematch);
+
+    const unchanged = await reports.currentMissionReport(mission.id);
+    expect(unchanged?.report.id).toBe(before?.report.id);
+    const refreshed = await reports.regenerateMissionReport(mission.id);
+    expect(refreshed?.report.runs.map((r) => r.runId).sort()).toEqual([alpha.id, sigma.id].sort());
+    expect(refreshed?.report.runs.find((r) => r.agentKind === 'alpha_semantic')?.status).toBe(
+      'failed',
+    );
+  });
+});
