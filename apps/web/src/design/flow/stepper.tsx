@@ -17,8 +17,8 @@ export type StepperProps = {
 export function Stepper({ current, busy, onJump }: StepperProps) {
   const currentIndex = stepIndex(current);
   return (
-    <header className="sticky top-0 z-10 border-b border-[var(--line)] bg-[var(--background)]/90 backdrop-blur">
-      <div className="mx-auto flex max-w-[880px] items-center justify-between px-6 py-3">
+    <header className="sticky top-0 z-10 h-[var(--stepper-h)] border-b border-[var(--line)] bg-[var(--background)]/90 backdrop-blur">
+      <div className="mx-auto flex h-full max-w-[880px] items-center justify-between px-6">
         <span className="text-sm font-semibold tracking-tight">AgentProof</span>
         <ol className="flex items-center" aria-label="Progress">
           {FLOW_STEPS.map((step, i) => {

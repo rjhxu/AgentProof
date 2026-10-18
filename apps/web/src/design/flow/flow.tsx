@@ -6,6 +6,7 @@ import { CHECKPOINT_LABELS } from '@agentproof/shared';
 import type {
   AgentKind,
   AgentReport,
+  FailurePoint,
   Issue,
   Mission,
   MissionReport,
@@ -13,7 +14,7 @@ import type {
   RepositoryConnection,
 } from '@agentproof/shared';
 
-import { costLine, summarize } from '../format';
+import { costLine, summarize, thesisLine } from '../format';
 import type { ReplayEvent } from '../replay/script';
 import { useReplay } from '../replay/use-replay';
 import { DevControls } from './dev-controls';
@@ -33,6 +34,10 @@ export type FlowProps = {
   mission: Mission;
   /** Artifact path -> URL for every frame the sandbox can show. */
   frames: Record<string, string>;
+  /** Artifact path -> the accessibility-tree text a reading agent took at a step. */
+  snapshots: Record<string, string>;
+  /** Run id -> where the run diverged, from each report. */
+  failurePoints: Record<string, FailurePoint>;
   initial: { step: FlowStep; speed: number; t: number | 'end' | null };
 };
 
@@ -114,6 +119,7 @@ export function Flow(p: FlowProps) {
   });
 
   const summary = useMemo(() => summarize(p.report), [p.report]);
+  const thesis = useMemo(() => thesisLine(p.report), [p.report]);
   const cards = useMemo(
     () => buildCards(p.report, p.runs, p.problems, p.frames),
     [p.report, p.runs, p.problems, p.frames],
@@ -187,7 +193,13 @@ export function Flow(p: FlowProps) {
   return (
     <MotionConfig reducedMotion="user">
       <Stepper current={state.step} busy={busy} onJump={jump} />
-      <main className="mx-auto max-w-[880px] px-6 pb-24 pt-12">
+      <main
+        className={
+          state.step === 'scan'
+            ? 'mx-auto w-full max-w-[1120px] px-6'
+            : 'mx-auto max-w-[880px] px-6 pb-24 pt-12'
+        }
+      >
         <AnimatePresence mode="wait" initial={false}>
           <motion.section
             key={state.step}
@@ -213,7 +225,11 @@ export function Flow(p: FlowProps) {
                 lanes={replay.lanes}
                 phase={state.phase}
                 summary={state.phase === 'done' ? summary : undefined}
+                thesis={state.phase === 'done' ? thesis : undefined}
                 matrix={state.phase === 'done' ? p.report.matrix : undefined}
+                costComparison={state.phase === 'done' ? p.report.costComparison : undefined}
+                snapshots={p.snapshots}
+                failurePoints={p.failurePoints}
                 resolveArtifactUrl={resolveArtifactUrl}
                 onContinue={() => dispatch({ type: 'CONTINUE' })}
               />

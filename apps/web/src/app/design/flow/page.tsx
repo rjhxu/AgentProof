@@ -6,8 +6,10 @@ import {
   repositoryA,
   resolveDesignArtifact,
   runsABugged,
+  snapshotsABugged,
 } from '@/design/fixtures';
 import { buildReplayScript } from '@/design/replay/script';
+import type { FailurePoint } from '@agentproof/shared';
 
 type Search = Record<string, string | string[] | undefined>;
 
@@ -36,8 +38,10 @@ export default async function FlowPage({ searchParams }: { searchParams: Promise
   const tRaw = first(sp.t);
   const t: number | 'end' | null = tRaw === 'end' ? 'end' : tRaw ? Number(tRaw) || null : null;
 
-  const script = buildReplayScript(runsABugged);
+  // One shopper at a time on the Scan step; the live runner still runs them in parallel.
+  const script = buildReplayScript(runsABugged, { sequential: true });
   const frames: Record<string, string> = {};
+  const failurePoints: Record<string, FailurePoint> = {};
   for (const run of runsABugged) {
     for (const s of run.steps) {
       const url = resolveDesignArtifact(s.screenshotPath);
@@ -46,6 +50,7 @@ export default async function FlowPage({ searchParams }: { searchParams: Promise
     const failing = run.failurePoint?.screenshotPath;
     const failingUrl = resolveDesignArtifact(failing);
     if (failing && failingUrl) frames[failing] = failingUrl;
+    if (run.failurePoint) failurePoints[run.runId] = run.failurePoint;
   }
 
   return (
@@ -58,6 +63,8 @@ export default async function FlowPage({ searchParams }: { searchParams: Promise
         script={script}
         mission={missionABugged.mission}
         frames={frames}
+        snapshots={snapshotsABugged}
+        failurePoints={failurePoints}
         initial={{ step, speed, t }}
       />
     </div>

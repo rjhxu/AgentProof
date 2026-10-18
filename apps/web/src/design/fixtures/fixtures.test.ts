@@ -9,6 +9,7 @@ import {
   resolveDesignArtifact,
   runAlphaABugged,
   runsABugged,
+  snapshotsABugged,
 } from './index';
 
 /**
@@ -55,6 +56,23 @@ describe('design fixtures', () => {
       }
     }
     expect(resolveDesignArtifact('run_unknown/step-000.png')).toBeUndefined();
+  });
+
+  it('every accessibility-tree snapshot a reading agent took is in the snapshots fixture', () => {
+    let count = 0;
+    for (const report of runsABugged) {
+      for (const step of report.steps) {
+        if (!step.snapshotPath) continue;
+        count += 1;
+        expect(snapshotsABugged[step.snapshotPath]).toMatch(/^- /);
+      }
+      const failing = report.failurePoint?.snapshotPath;
+      if (failing) expect(snapshotsABugged[failing]).toContain(report.failurePoint!.perceived);
+    }
+    expect(count).toBe(11);
+    expect(
+      runsABugged.find((r) => r.agent.kind === 'beta_vision')!.steps.some((s) => s.snapshotPath),
+    ).toBe(false);
   });
 
   it('the problems point at runs of the mission and carry their repairs', () => {
