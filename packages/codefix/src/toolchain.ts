@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -17,6 +17,13 @@ export interface ExecOptions {
   timeoutMs: number;
   env?: NodeJS.ProcessEnv;
   input?: string;
+  /**
+   * On Windows, start the command through cmd.exe. Only for the .cmd shims npm and tsc, which
+   * Node refuses to start directly (CVE-2024-27980); ignored elsewhere, where the binaries start
+   * on their own. The arguments are then joined into one command line, so exec() accepts only
+   * plain literals for them, and only a command path free of shell metacharacters.
+   */
+  shell?: boolean;
 }
 
 export interface StepResult {
@@ -83,9 +90,88 @@ export function scrubbedEnv(extra?: Record<string, string>): NodeJS.ProcessEnv {
 }
 
 /**
- * execFile (never a shell), windowsHide, maxBuffer 16 MiB, SIGKILL on timeout; never throws
- * for a non-zero exit, returns code/stdout/stderr. Throws only when the binary cannot be
- * spawned (ENOENT), with a message that names the command.
+ * With a shell the arguments become one command line, so only fixed literals may travel that way
+ * (the npm and tsc flags are), and the command path may carry nothing cmd.exe would expand or
+ * split a quoted path on.
+ */
+const SHELL_LITERAL = /^[A-Za-z0-9_.=-]+$/;
+const SHELL_META = /["%&|<>^!\r\n]/;
+
+function assertShellSafe(command: string, args: string[]): void {
+  if (SHELL_META.test(command)) {
+    throw new Error(
+      `refusing to run "${command}" through a shell: the path contains shell metacharacters`,
+    );
+  }
+  const unsafe = args.find((arg) => !SHELL_LITERAL.test(arg));
+  if (unsafe !== undefined) {
+    throw new Error(
+      `refusing to pass "${unsafe}" through a shell: arguments must be plain literals`,
+    );
+  }
+}
+
+interface Launch {
+  file: string;
+  args: string[];
+  windowsVerbatimArguments: boolean;
+  /** Started through cmd.exe, so a timeout has a process tree to end, not one process. */
+  viaCmd: boolean;
+}
+
+/** A bare command name that cmd.exe resolves through PATH, as npm.cmd is. */
+const BARE_NAME = /^[A-Za-z0-9_.-]+$/;
+
+/**
+ * How a .cmd shim starts on Windows: `cmd.exe /d /s /c "<command> <args>"`, the same line Node
+ * builds for `shell: true` (spelled out here because Node 24 deprecates that option with
+ * arguments, DEP0190). /d skips AutoRun; /s makes cmd strip only the outer quotes, so the quoted
+ * command path survives. A path is always quoted: cmd.exe splits an unquoted one on whitespace and
+ * also on ; , and =, all of which a directory name may carry. A bare name is never quoted: a shim
+ * found through PATH under a quoted name sees the working directory as its own (%~dp0), and
+ * npm.cmd then cannot find npm. The arguments reach cmd verbatim, after assertShellSafe(). A
+ * missing shim is then cmd's "not recognized" on stderr with exit 1, not an ENOENT.
+ */
+function windowsShellLaunch(command: string, args: string[]): Launch {
+  assertShellSafe(command, args);
+  const file = BARE_NAME.test(command) ? command : `"${command}"`;
+  return {
+    file: process.env.ComSpec || 'cmd.exe',
+    args: ['/d', '/s', '/c', `"${[file, ...args].join(' ')}"`],
+    windowsVerbatimArguments: true,
+    viaCmd: true,
+  };
+}
+
+/**
+ * End a child that has outlived its timeout. Through cmd.exe on Windows the work runs in cmd's
+ * grandchildren (node, for npm and tsc), which killing cmd alone would orphan: taskkill /T ends
+ * the whole tree. Its outcome is not awaited; the execFile callback fires once cmd.exe is gone,
+ * and should taskkill fail or be missing, cmd.exe itself is still killed.
+ */
+function killTree(child: ChildProcess, viaCmd: boolean): void {
+  if (viaCmd && process.platform === 'win32' && child.pid !== undefined) {
+    const killer = spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    const fallback = () => {
+      if (child.exitCode === null) child.kill('SIGKILL');
+    };
+    killer.on('error', fallback);
+    killer.on('exit', fallback);
+    killer.unref();
+    return;
+  }
+  child.kill('SIGKILL');
+}
+
+/**
+ * execFile (never a shell, except cmd.exe for Windows .cmd shims: see ExecOptions.shell),
+ * windowsHide, maxBuffer 16 MiB, SIGKILL on timeout (through cmd.exe, taskkill on the whole
+ * tree, so npm's and tsc's node grandchildren go too); never throws for a non-zero exit, returns
+ * code/stdout/stderr. Throws only when the binary cannot be spawned (ENOENT), with a message
+ * that names the command, or when a shell run is asked for with unsafe arguments.
  */
 export function exec(command: string, args: string[], opts: ExecOptions): Promise<ExecResult> {
   return new Promise((resolve, reject) => {
@@ -93,14 +179,21 @@ export function exec(command: string, args: string[], opts: ExecOptions): Promis
     let timedOut = false;
     let resolved = false;
 
+    const launch: Launch =
+      opts.shell && process.platform === 'win32'
+        ? windowsShellLaunch(command, args)
+        : { file: command, args, windowsVerbatimArguments: false, viaCmd: false };
+
+    // The timeout is the timer below, not execFile's own: cmd.exe has to be alive when taskkill
+    // walks its tree, so nothing may kill it first.
     const child = execFile(
-      command,
-      args,
+      launch.file,
+      launch.args,
       {
         cwd: opts.cwd,
-        timeout: opts.timeoutMs,
         env: opts.env,
         windowsHide: true,
+        windowsVerbatimArguments: launch.windowsVerbatimArguments,
         maxBuffer: 16 * 1024 * 1024,
       },
       (error, stdout: string | Buffer, stderr: string | Buffer) => {
@@ -110,18 +203,18 @@ export function exec(command: string, args: string[], opts: ExecOptions): Promis
 
         if (resolved) return;
 
-        if (error) {
-          // Check if it's a timeout
-          if (error.killed && timedOut) {
-            resolved = true;
-            resolve({
-              code: null,
-              stdout: stdoutStr,
-              stderr: stderrStr,
-              timedOut: true,
-              durationMs,
-            });
-          } else if ((error as any).code === 'ENOENT') {
+        if (timedOut) {
+          // Ended by the timer below, whatever exit cmd.exe or the binary reported for it.
+          resolved = true;
+          resolve({
+            code: null,
+            stdout: stdoutStr,
+            stderr: stderrStr,
+            timedOut: true,
+            durationMs,
+          });
+        } else if (error) {
+          if ((error as any).code === 'ENOENT') {
             // Command not found - reject
             resolved = true;
             reject(new Error(`Command not found: ${command}`));
@@ -161,7 +254,7 @@ export function exec(command: string, args: string[], opts: ExecOptions): Promis
     if (opts.timeoutMs) {
       const timeoutHandle = setTimeout(() => {
         timedOut = true;
-        child.kill('SIGKILL');
+        killTree(child, launch.viaCmd);
       }, opts.timeoutMs);
 
       child.on('exit', () => {
@@ -299,14 +392,17 @@ export async function installDependencies(
     };
   }
 
-  // Run npm install or npm ci
+  // Run npm install or npm ci. Windows ships npm as npm.cmd, which Node starts only through the
+  // shell; the arguments are fixed literals, which exec() asserts before joining them.
   const command = useLockfile ? 'ci' : 'install';
   const args = [command, '--ignore-scripts', '--no-audit', '--no-fund', '--loglevel=error'];
+  const windows = process.platform === 'win32';
 
-  const result = await _exec('npm', args, {
+  const result = await _exec(windows ? 'npm.cmd' : 'npm', args, {
     cwd: dir,
     timeoutMs,
     env: scrubbedEnv(),
+    ...(windows ? { shell: true } : {}),
   });
 
   const durationMs = Date.now() - startTime;
@@ -378,7 +474,8 @@ export async function typecheck(
   }
 
   // Check if tsc exists
-  const tscBinary = process.platform === 'win32' ? 'tsc.cmd' : 'tsc';
+  const windows = process.platform === 'win32';
+  const tscBinary = windows ? 'tsc.cmd' : 'tsc';
   const tscPath = path.join(dir, 'node_modules', '.bin', tscBinary);
 
   try {
@@ -393,11 +490,12 @@ export async function typecheck(
     };
   }
 
-  // Run tsc
+  // Run tsc (the .cmd shim needs the shell on Windows, as npm does above)
   const result = await exec(tscPath, ['-p', 'tsconfig.json', '--noEmit', '--pretty', 'false'], {
     cwd: dir,
     timeoutMs,
     env: scrubbedEnv(),
+    ...(windows ? { shell: true } : {}),
   });
 
   const durationMs = Date.now() - startTime;

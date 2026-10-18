@@ -1,9 +1,8 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { writeFileSync, rmSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   applyEdits,
   unifiedDiff,
@@ -47,14 +46,14 @@ function validateDiffWithGit(files: Map<string, { before: string; after: string 
   execFileSync('git', ['init', '-q'], { cwd: dir });
   execFileSync('git', ['config', 'user.name', 't'], { cwd: dir });
   execFileSync('git', ['config', 'user.email', 't@t'], { cwd: dir });
+  // The diffs are LF; a global core.autocrlf=true (common on Windows) would make `git apply`
+  // write CRLF and the content comparison below would fail for line endings alone.
+  execFileSync('git', ['config', 'core.autocrlf', 'false'], { cwd: dir });
 
   // Write before files and commit
   for (const [path, content] of files) {
     const fullPath = join(dir, path);
-    const parentDir = fullPath.substring(0, fullPath.lastIndexOf('/'));
-    if (parentDir !== dir) {
-      execFileSync('mkdir', ['-p', parentDir]);
-    }
+    mkdirSync(dirname(fullPath), { recursive: true });
     writeFileSync(fullPath, content.before);
   }
 

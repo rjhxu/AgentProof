@@ -16,6 +16,16 @@ import {
   TYPECHECK_TIMEOUT_MS,
 } from './toolchain';
 
+/** True while a process with this pid exists (signal 0 only probes). */
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 describe('toolchain', () => {
   describe('scrubbedEnv', () => {
     it('excludes secrets and inherited overrides', () => {
@@ -71,6 +81,73 @@ describe('toolchain', () => {
         }),
       ).rejects.toThrow('Command not found: nonexistent-binary-xyz');
     });
+
+    // The cmd.exe path exists only on Windows; elsewhere `shell` is ignored.
+    if (process.platform === 'win32') {
+      describe('through cmd.exe', () => {
+        let tempDir: string;
+
+        beforeEach(async () => {
+          tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cmd-test-'));
+        });
+
+        afterEach(async () => {
+          try {
+            await fs.rm(tempDir, { recursive: true, force: true });
+          } catch {
+            // Ignore cleanup errors
+          }
+        });
+
+        it('quotes the command path even without whitespace in it', async () => {
+          // cmd.exe splits an unquoted path on ; , and = as well as on spaces.
+          const dir = path.join(tempDir, 'a;b=c');
+          await fs.mkdir(dir);
+          const shim = path.join(dir, 'say.cmd');
+          await fs.writeFile(shim, '@echo off\r\necho hi %1\r\n');
+
+          const result = await exec(shim, ['there'], {
+            cwd: tempDir,
+            timeoutMs: 5000,
+            shell: true,
+          });
+
+          expect(result.code).toBe(0);
+          expect(result.stdout.trim()).toBe('hi there');
+        });
+
+        it('refuses arguments that are not plain literals', async () => {
+          await expect(
+            exec('npm.cmd', ['ci', '--loglevel=error & del x'], {
+              cwd: tempDir,
+              timeoutMs: 5000,
+              shell: true,
+            }),
+          ).rejects.toThrow('arguments must be plain literals');
+        });
+
+        it('ends the grandchildren of a run that timed out', async () => {
+          // The shim starts node, which prints its pid and lingers: that pid must be gone after
+          // the timeout, not orphaned by a kill of cmd.exe alone.
+          const shim = path.join(tempDir, 'linger.cmd');
+          await fs.writeFile(
+            shim,
+            `@echo off\r\n"${process.execPath}" -e "process.stdout.write(String(process.pid)); setTimeout(function () {}, 30000)"\r\n`,
+          );
+
+          const result = await exec(shim, [], { cwd: tempDir, timeoutMs: 1500, shell: true });
+
+          expect(result.timedOut).toBe(true);
+          const pid = Number(result.stdout.trim());
+          expect(pid).toBeGreaterThan(0);
+          const deadline = Date.now() + 5000;
+          while (alive(pid) && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 100));
+          }
+          expect(alive(pid)).toBe(false);
+        });
+      });
+    }
   });
 
   describe('trimOutput', () => {
