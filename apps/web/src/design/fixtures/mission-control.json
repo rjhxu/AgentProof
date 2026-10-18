@@ -1,0 +1,236 @@
+{
+  "id": "rep_c37c91a4a339",
+  "missionId": "mis_b431779e01c1",
+  "generatedAt": "2026-10-18T03:29:42.835Z",
+  "mission": {
+    "id": "mis_b431779e01c1",
+    "createdAt": "2026-10-18T03:29:12.511Z",
+    "storeUrl": "http://localhost:5000",
+    "rawPrompt": "Add the canvas tote to the cart and reach checkout. Do not place the order.",
+    "requirements": {
+      "product": "canvas tote",
+      "attributes": {},
+      "quantity": 1
+    },
+    "successMilestone": "checkout_review",
+    "allowedActions": [
+      "navigate",
+      "click",
+      "type",
+      "select",
+      "scroll",
+      "extract"
+    ],
+    "paymentAuthorized": false,
+    "maxSteps": 25
+  },
+  "storeUrl": "http://localhost:5000",
+  "runs": [
+    {
+      "runId": "run_59e8ee3653ca",
+      "agentKind": "alpha_semantic",
+      "agentName": "Agent Alpha",
+      "model": "claude-haiku-5-5",
+      "status": "passed",
+      "claim": {
+        "outcome": "done",
+        "summary": "Checkout review page reached with 1 x Canvas Tote (Color: Natural) at $24.00, quantity 1; no attributes were required by the mission, and I stopped before Place order as the rules require.",
+        "finalUrl": "http://localhost:5000/checkout"
+      },
+      "usage": {
+        "calls": 5,
+        "inputTokens": 12477,
+        "outputTokens": 1382,
+        "reasoningTokens": 651,
+        "cachedInputTokens": 0,
+        "imageInputs": 0,
+        "estimatedCostUsd": 0.001939,
+        "llmLatencyMs": 9242
+      },
+      "durationMs": 7645,
+      "stepsUsed": 4,
+      "reportPath": "run_59e8ee3653ca/report.json"
+    },
+    {
+      "runId": "run_687dca087a49",
+      "agentKind": "beta_vision",
+      "agentName": "Agent Beta",
+      "model": "claude-haiku-5-5",
+      "status": "passed",
+      "claim": {
+        "outcome": "done",
+        "summary": "Checkout review page is reached showing 1 x Canvas Tote (Color: Natural) at $24.00, quantity 1, matching the mission; stopping before Place order as required.",
+        "finalUrl": "http://localhost:5000/checkout"
+      },
+      "usage": {
+        "calls": 5,
+        "inputTokens": 15498,
+        "outputTokens": 1576,
+        "reasoningTokens": 816,
+        "cachedInputTokens": 0,
+        "imageInputs": 4,
+        "estimatedCostUsd": 0.002338,
+        "llmLatencyMs": 10968
+      },
+      "durationMs": 8068,
+      "stepsUsed": 4,
+      "reportPath": "run_687dca087a49/report.json"
+    },
+    {
+      "runId": "run_bdfe47f7a244",
+      "agentKind": "sigma_hybrid",
+      "agentName": "Agent Sigma",
+      "model": "claude-sonnet-5-5",
+      "status": "passed",
+      "claim": {
+        "outcome": "done",
+        "summary": "The checkout review page (Step 2 of 3 - Review) is showing 1 x Canvas Tote (Color: Natural) - $24.00 with an order total of $24.00. The mission had no attribute requirements and asked for quantity 1, so I am stopping here without clicking Place order.",
+        "finalUrl": "http://localhost:5000/checkout"
+      },
+      "usage": {
+        "calls": 5,
+        "inputTokens": 18901,
+        "outputTokens": 821,
+        "reasoningTokens": 0,
+        "cachedInputTokens": 0,
+        "imageInputs": 4,
+        "estimatedCostUsd": 0.040646,
+        "llmLatencyMs": 10756
+      },
+      "durationMs": 13238,
+      "stepsUsed": 4,
+      "reportPath": "run_bdfe47f7a244/report.json"
+    },
+    {
+      "runId": "run_a11337854ae4",
+      "agentKind": "gamma_structured",
+      "agentName": "Agent Gamma",
+      "model": "none",
+      "status": "passed",
+      "claim": {
+        "outcome": "done",
+        "summary": "Selected TOTE-001-NAT from the live catalog. Read back the cart using this run’s session cookie."
+      },
+      "usage": {
+        "calls": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "reasoningTokens": 0,
+        "cachedInputTokens": 0,
+        "imageInputs": 0,
+        "estimatedCostUsd": 0,
+        "llmLatencyMs": 0
+      },
+      "durationMs": 36,
+      "stepsUsed": 0,
+      "reportPath": "run_a11337854ae4/report.json"
+    }
+  ],
+  "matrix": {
+    "product_discovered": {
+      "alpha_semantic": "passed",
+      "beta_vision": "passed",
+      "gamma_structured": "passed",
+      "sigma_hybrid": "passed"
+    },
+    "correct_color_identified": {
+      "alpha_semantic": "not_run",
+      "beta_vision": "not_run",
+      "gamma_structured": "not_run",
+      "sigma_hybrid": "not_run"
+    },
+    "correct_size_identified": {
+      "alpha_semantic": "not_run",
+      "beta_vision": "not_run",
+      "gamma_structured": "not_run",
+      "sigma_hybrid": "not_run"
+    },
+    "added_to_cart": {
+      "alpha_semantic": "passed",
+      "beta_vision": "passed",
+      "gamma_structured": "passed",
+      "sigma_hybrid": "passed"
+    },
+    "cart_matches_variant": {
+      "alpha_semantic": "passed",
+      "beta_vision": "passed",
+      "gamma_structured": "passed",
+      "sigma_hybrid": "passed"
+    },
+    "cart_quantity_correct": {
+      "alpha_semantic": "passed",
+      "beta_vision": "passed",
+      "gamma_structured": "passed",
+      "sigma_hybrid": "passed"
+    },
+    "price_within_budget": {
+      "alpha_semantic": "passed",
+      "beta_vision": "passed",
+      "gamma_structured": "passed",
+      "sigma_hybrid": "passed"
+    },
+    "checkout_review_reached": {
+      "alpha_semantic": "passed",
+      "beta_vision": "passed",
+      "gamma_structured": "passed",
+      "sigma_hybrid": "passed"
+    },
+    "catalog_variant_resolves": {
+      "alpha_semantic": "not_run",
+      "beta_vision": "not_run",
+      "gamma_structured": "passed",
+      "sigma_hybrid": "not_run"
+    },
+    "catalog_price_matches_page": {
+      "alpha_semantic": "not_run",
+      "beta_vision": "not_run",
+      "gamma_structured": "not_run",
+      "sigma_hybrid": "not_run"
+    }
+  },
+  "attributions": [],
+  "costComparison": [
+    {
+      "agentKind": "alpha_semantic",
+      "model": "claude-haiku-5-5",
+      "status": "passed",
+      "inputTokens": 12477,
+      "outputTokens": 1382,
+      "imageInputs": 0,
+      "estimatedCostUsd": 0.001939,
+      "relativeCost": 1
+    },
+    {
+      "agentKind": "beta_vision",
+      "model": "claude-haiku-5-5",
+      "status": "passed",
+      "inputTokens": 15498,
+      "outputTokens": 1576,
+      "imageInputs": 4,
+      "estimatedCostUsd": 0.002338,
+      "relativeCost": 1.21
+    },
+    {
+      "agentKind": "sigma_hybrid",
+      "model": "claude-sonnet-5-5",
+      "status": "passed",
+      "inputTokens": 18901,
+      "outputTokens": 821,
+      "imageInputs": 4,
+      "estimatedCostUsd": 0.040646,
+      "relativeCost": 20.96
+    },
+    {
+      "agentKind": "gamma_structured",
+      "model": "none",
+      "status": "passed",
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "imageInputs": 0,
+      "estimatedCostUsd": 0,
+      "relativeCost": 0
+    }
+  ],
+  "headline": "4 of 4 agents completed the mission.",
+  "recommendations": []
+}
