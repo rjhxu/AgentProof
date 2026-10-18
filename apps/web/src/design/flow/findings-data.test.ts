@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { CHECKPOINT_LABELS } from '@agentproof/shared';
 
 import { missionABugged, problemsABugged, runAlphaABugged, runsABugged } from '../fixtures';
-import { buildProblems, orderProblems } from './findings-data';
+import { buildProblems, buildRoster, orderProblems } from './findings-data';
 
 const frames = { 'run_e2f6442a5419/step-001.png': '/design/alpha-a-step-01.png' };
 const carts = Object.fromEntries(
@@ -11,6 +11,17 @@ const carts = Object.fromEntries(
 );
 const cards = buildProblems(missionABugged, runsABugged, problemsABugged, frames, carts);
 const [alpha, gamma] = cards;
+
+describe('buildRoster', () => {
+  it("reads each shopper's verdict from the runs and the cost from the comparison", () => {
+    expect(buildRoster(missionABugged).map((r) => [r.kind, r.status, r.cost, r.multiple])).toEqual([
+      ['alpha_semantic', 'failed', '$0.0025', undefined],
+      ['beta_vision', 'passed', '$0.0027', '1.1× Alpha'],
+      ['gamma_structured', 'failed', '$0', undefined],
+      ['sigma_hybrid', 'passed', '$0.054', '22× Alpha'],
+    ]);
+  });
+});
 
 describe('orderProblems', () => {
   it('puts the problem that broke the purchase path first, whatever the input order', () => {

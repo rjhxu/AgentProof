@@ -14,7 +14,6 @@ import type {
   RunStep,
 } from '@agentproof/shared';
 
-import { CheckpointMatrix } from '../components/checkpoint-matrix';
 import { StatusBadge } from '../components/status-badge';
 import {
   clickPoint,
@@ -28,7 +27,6 @@ import {
   STAGES,
   stepReason,
   targetLine,
-  type ScanSummary,
   type Sense,
   type Stage as PathStage,
 } from '../format';
@@ -58,11 +56,6 @@ export type ScanStepProps = {
   /** In stage order: the agents take the stage in this order and sit in the roster in it. */
   lanes: LaneState[];
   phase: 'running' | 'done';
-  summary?: ScanSummary;
-  /** The thesis in one sentence, computed from the report, for the closing. */
-  thesis?: string;
-  /** The finished matrix, for the collapsed "all checkpoints" table. */
-  matrix?: MissionReport['matrix'];
   /** The report's cost table, for the multiples on the roster once the scan is done. */
   costComparison?: MissionReport['costComparison'];
   /** Artifact path -> text of the accessibility-tree snapshot an agent read at a step. */
@@ -75,6 +68,10 @@ export type ScanStepProps = {
   stepArtifacts: Record<string, StepArtifact[]>;
   resolveArtifactUrl: (path: string | undefined) => string | undefined;
   onContinue: () => void;
+  /** "Change" in the subtitle: back to the store step with the mission editor open. */
+  onChangeMission?: () => void;
+  /** Which shopper the finished scan opens on. Defaults to the first lane. */
+  initialReviewRunId?: string;
 };
 
 const DESCRIPTOR: Record<AgentKind, string> = {
@@ -305,6 +302,15 @@ function RosterChip({
         <span className="flex min-w-0 items-center gap-1.5">
           <VerdictMark lane={lane} active={role === 'active'} />
           <span className="truncate text-[13px] font-semibold">{shortName(lane.agent.name)}</span>
+          {lane.agent.kind === BENCHMARK_KIND ? (
+            <span className="shrink-0 rounded bg-[var(--panel-2)] px-1 py-px text-[9px] font-medium uppercase tracking-wide text-[var(--muted)]">
+              benchmark
+            </span>
+          ) : !browses ? (
+            <span className="shrink-0 rounded bg-[var(--panel-2)] px-1 py-px text-[9px] font-medium uppercase tracking-wide text-[var(--muted)]">
+              catalog
+            </span>
+          ) : null}
           <SenseIcons kind={lane.agent.kind} />
         </span>
         <span className="shrink-0 text-[11px] tabular-nums text-[var(--muted)]">
@@ -314,12 +320,7 @@ function RosterChip({
           ) : null}
         </span>
       </div>
-      <p className="mt-0.5 truncate text-[11px] text-[var(--muted)]">
-        {lane.agent.kind === BENCHMARK_KIND ? (
-          <span className="text-[var(--foreground)]">benchmark shopper · </span>
-        ) : !browses ? (
-          <span className="text-[var(--foreground)]">catalog check · </span>
-        ) : null}
+      <p className="mt-0.5 text-[11px] leading-snug text-[var(--muted)]">
         {statusWord(lane, role)}
       </p>
       <div className="mt-1.5 h-[3px] w-full overflow-hidden rounded bg-[var(--panel-2)]">
@@ -358,7 +359,7 @@ function TreePanel({
     );
   }
   return (
-    <pre className="thin-scroll h-full overflow-auto p-3 font-mono text-[11px] leading-[1.5] text-[var(--foreground)]">
+    <pre className="scan-tree thin-scroll h-full overflow-auto p-3 font-mono text-[11px] leading-[1.5] text-[var(--foreground)] min-[1440px]:text-[12px]">
       {lines.map((line, i) => (
         <span
           key={i}
@@ -669,6 +670,7 @@ function Stage({
   const why = !browses && caption ? GAMMA_WHY[caption.id] : undefined;
   const byId = new Map(lane.checkpoints.map((c) => [c.id, c.status] as const));
   const expected = expectedCheckpoints(browses);
+  const passedCount = expected.filter((id) => byId.get(id) === 'passed').length;
 
   const action = browses
     ? terminal
@@ -693,7 +695,7 @@ function Stage({
             : 'Reading the catalog feed';
 
   return (
-    <div className="stage-grid grid h-full min-h-0 grid-cols-1 gap-6 md:grid-cols-[minmax(0,1fr)_300px]">
+    <div className="stage-grid grid min-h-0 grid-cols-1 gap-6 md:grid-cols-[minmax(0,1fr)_300px]">
       <div className="flex min-h-0 min-w-0 items-start">
         {browses ? (
           <PerceptionPanel
@@ -709,7 +711,7 @@ function Stage({
         )}
       </div>
 
-      <div className="flex min-h-0 min-w-0 flex-col overflow-hidden">
+      <div className="flex h-full min-h-0 min-w-0 flex-col">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <h2 className="text-[17px] font-semibold">{shortName(lane.agent.name)}</h2>
           <SenseIcons kind={lane.agent.kind} size={13} />
@@ -772,8 +774,8 @@ function Stage({
 
         <div className="mt-auto pt-4">
           <Track stage={lane.stage} browses={browses} />
-          <div className="mt-4 flex items-center justify-between gap-3">
-            <span className="text-[12px] tabular-nums text-[var(--muted)]">
+          <div className="mt-3 flex items-center justify-between gap-3">
+            <span className="whitespace-nowrap text-[12px] tabular-nums text-[var(--muted)]">
               {browses ? (
                 <>
                   {lane.steps.length} step{lane.steps.length === 1 ? '' : 's'} ·{' '}
@@ -785,7 +787,12 @@ function Stage({
                 </>
               )}
             </span>
-            <div className="flex items-center gap-1.5" aria-label="Checkpoints">
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="whitespace-nowrap text-[12px] text-[var(--muted)]">
+              Checkpoints · {passedCount} of {expected.length} passed
+            </span>
+            <div className="flex items-center gap-1.5" aria-hidden>
               {expected.map((id) => (
                 <Tick key={id} id={id} status={byId.get(id)} />
               ))}
@@ -879,72 +886,11 @@ function ReviewBar({
       <button
         type="button"
         onClick={onClose}
-        className="shrink-0 text-[var(--muted)] underline-offset-4 hover:underline"
+        className="inline-flex h-8 shrink-0 items-center rounded-md bg-[var(--accent)] px-3 text-[13px] font-medium text-[var(--accent-ink)] transition hover:opacity-90"
       >
-        Back to results
+        Back to findings
       </button>
     </div>
-  );
-}
-
-function Closing({
-  summary,
-  thesis,
-  matrix,
-  agents,
-  onContinue,
-  onReview,
-}: {
-  summary: ScanSummary;
-  thesis?: string;
-  matrix?: MissionReport['matrix'];
-  agents: Array<{ kind: AgentKind; name: string }>;
-  onContinue: () => void;
-  /** Opens the first agent's review. */
-  onReview?: () => void;
-}) {
-  return (
-    <motion.section
-      key="closing"
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3, ease: 'easeOut' }}
-      className="thin-scroll flex h-full flex-col items-center justify-center overflow-auto text-center"
-    >
-      <p className="text-[24px] font-semibold leading-tight tracking-tight">{summary.short}</p>
-      {thesis ? (
-        <p className="mt-2 max-w-[560px] text-[16px] leading-relaxed text-[var(--muted)]">
-          {thesis}
-        </p>
-      ) : null}
-      <button
-        type="button"
-        onClick={onContinue}
-        className="mt-5 inline-flex h-11 items-center gap-2 rounded-md bg-[var(--accent)] px-5 text-[15px] font-medium text-[var(--accent-ink)] transition hover:opacity-90"
-      >
-        See what we found
-        <ArrowRightIcon />
-      </button>
-      {onReview ? (
-        <button
-          type="button"
-          onClick={onReview}
-          className="mt-4 text-sm text-[var(--muted)] underline-offset-4 hover:underline"
-        >
-          Look back at how each agent did it
-        </button>
-      ) : null}
-      {matrix ? (
-        <details className="mt-5 w-full max-w-[880px] text-left">
-          <summary className="cursor-pointer text-center text-sm text-[var(--muted)]">
-            All checkpoints
-          </summary>
-          <div className="mt-3">
-            <CheckpointMatrix matrix={matrix} agents={agents} />
-          </div>
-        </details>
-      ) : null}
-    </motion.section>
   );
 }
 
@@ -976,24 +922,51 @@ function finalCosts(
 
 type Review = { runId: string; position: number };
 
+const SHOPPER_COUNT = ['No', 'One', 'Two', 'Three', 'Four'] as const;
+
+/** "Three shoppers try" from the browsing lanes. Gamma is named on its own in the subtitle. */
+function shopperLead(lanes: LaneState[], done: boolean): string {
+  const n = lanes.filter((lane) => lane.agent.kind !== 'gamma_structured').length;
+  const word = SHOPPER_COUNT[n] ?? String(n);
+  if (n === 1) return done ? 'One shopper tried' : 'One shopper tries';
+  return `${word} shoppers ${done ? 'tried' : 'try'}`;
+}
+
+function reviewFor(lanes: LaneState[], runId: string | undefined): Review | null {
+  const lane = (runId ? lanes.find((l) => l.runId === runId) : undefined) ?? lanes[0];
+  return lane ? { runId: lane.runId, position: 0 } : null;
+}
+
 /**
- * Step 2: one agent on stage at a time, all four on the roster, then one line and one button.
- * Once the scan is done, any roster chip opens that agent's review: the same stage, rebuilt at
- * each step of its process, with a scrubber and the arrow keys.
+ * Step 2: one agent on stage at a time, all four on the roster. When the report is in, the
+ * page leaves for Findings; coming back opens one shopper's review, with a scrubber and the
+ * arrow keys, and "Back to findings".
  */
 export function ScanStep(p: ScanStepProps) {
   const onStage = stageLane(p.lanes) ?? p.lanes[0];
   const next = nextLane(p.lanes);
   const finals = finalCosts(p.costComparison, p.lanes);
   const scale = Math.max(costScale(p.lanes), ...Object.values(finals).map((f) => f.costUsd));
-  const agents = p.lanes.map((l) => ({ kind: l.agent.kind, name: l.agent.name }));
   const done = p.phase === 'done';
 
-  const [review, setReview] = useState<Review | null>(null);
+  const [review, setReview] = useState<Review | null>(() =>
+    p.phase === 'done' ? reviewFor(p.lanes, p.initialReviewRunId) : null,
+  );
   const reviewLane = review ? p.lanes.find((l) => l.runId === review.runId) : undefined;
   useEffect(() => {
-    if (!done) setReview(null);
-  }, [done]);
+    if (!done) {
+      setReview(null);
+      return;
+    }
+    setReview((current) => {
+      const preferred = p.initialReviewRunId;
+      if (preferred && preferred !== current?.runId && p.lanes.some((l) => l.runId === preferred)) {
+        return { runId: preferred, position: 0 };
+      }
+      if (current && p.lanes.some((l) => l.runId === current.runId)) return current;
+      return reviewFor(p.lanes, preferred);
+    });
+  }, [done, p.initialReviewRunId, p.lanes]);
   const openReview = (lane: LaneState) => setReview({ runId: lane.runId, position: 0 });
   const moveReview = (position: number) => {
     if (!reviewLane) return;
@@ -1003,9 +976,11 @@ export function ScanStep(p: ScanStepProps) {
   useEffect(() => {
     if (!review || !reviewLane) return;
     const onKey = (e: KeyboardEvent) => {
+      const target = e.target instanceof Element ? e.target : null;
+      if (target?.closest('input, textarea, select, [contenteditable]')) return;
       if (e.key === 'ArrowRight') moveReview(review.position + 1);
       else if (e.key === 'ArrowLeft') moveReview(review.position - 1);
-      else if (e.key === 'Escape') setReview(null);
+      else if (e.key === 'Escape') p.onContinue();
       else return;
       e.preventDefault();
     };
@@ -1023,10 +998,20 @@ export function ScanStep(p: ScanStepProps) {
           <h1 className="scan-title text-[24px] font-semibold leading-tight tracking-tight">
             {done ? 'Scan complete' : 'Shopping your store'}
           </h1>
-          <p className="scan-subtitle mt-0.5 truncate text-[14px] text-[var(--muted)]">
-            {done
-              ? `Three shoppers tried to buy ${describeMission(p.mission)}, one at a time, and Gamma checked your product data against the cart.`
-              : `Three shoppers try to buy ${describeMission(p.mission)}, one at a time, and Gamma checks your product data against the cart.`}
+          <p className="scan-subtitle mt-0.5 flex min-w-0 items-baseline gap-2 text-[14px] text-[var(--muted)]">
+            <span className="truncate">
+              {shopperLead(p.lanes, done)} to buy {describeMission(p.mission)}, one at a time, and
+              Gamma {done ? 'checked' : 'checks'} your product data against the cart.
+            </span>
+            {p.onChangeMission ? (
+              <button
+                type="button"
+                onClick={p.onChangeMission}
+                className="shrink-0 text-[var(--foreground)] underline-offset-4 hover:underline"
+              >
+                Change
+              </button>
+            ) : null}
           </p>
         </div>
       </div>
@@ -1058,7 +1043,7 @@ export function ScanStep(p: ScanStepProps) {
           lane={reviewLane}
           position={review.position}
           onPosition={moveReview}
-          onClose={() => setReview(null)}
+          onClose={p.onContinue}
         />
       ) : null}
 
@@ -1087,16 +1072,6 @@ export function ScanStep(p: ScanStepProps) {
                 review
               />
             </motion.div>
-          ) : done && p.summary ? (
-            <Closing
-              key="closing"
-              summary={p.summary}
-              thesis={p.thesis}
-              matrix={p.matrix}
-              agents={agents}
-              onContinue={p.onContinue}
-              onReview={p.lanes[0] ? () => openReview(p.lanes[0]!) : undefined}
-            />
           ) : onStage ? (
             <motion.div
               key={onStage.runId}

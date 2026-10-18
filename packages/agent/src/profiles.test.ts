@@ -90,6 +90,7 @@ describe('resolveModel', () => {
     expect(resolveModel('alpha_semantic', 'xai')).toBe('grok-4.3');
     expect(resolveModel('alpha_semantic', 'anthropic')).toBe('claude-haiku-5-5');
     expect(resolveModel('beta_vision', 'xai')).toBe('grok-4.3');
+    expect(resolveModel('beta_vision', 'anthropic')).toBe('claude-sonnet-5-5');
     expect(resolveModel('sigma_hybrid', 'xai')).toBe('grok-4.7');
     expect(resolveModel('sigma_hybrid', 'anthropic')).toBe('claude-sonnet-5-5');
     expect(resolveModel('narrator', 'xai')).toBe('grok-4.20-0309-non-reasoning');

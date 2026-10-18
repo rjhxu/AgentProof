@@ -8,10 +8,9 @@ import { senses, targetLine, type Sense } from '../format';
 import { BracesIcon, CheckIcon, CrossIcon, EyeIcon, SparkIcon, TextLinesIcon } from './icons';
 
 /*
- * The marks that identify a shopper and its verdict, shared by the Findings walkthrough and,
- * once the Scan pass in flight has landed, the Scan stage. TODO(zach): scan-step.tsx keeps
- * private copies of DESCRIPTOR, SenseIcons, VerdictMark, TreePanel and CartLines; point it here
- * and delete them.
+ * The marks that identify a shopper and its verdict, shared by Findings and the Scan stage.
+ * TODO(zach): scan-step.tsx keeps private copies of DESCRIPTOR, SenseIcons, VerdictMark,
+ * TreePanel and CartLines; point it here and delete them.
  */
 
 /** One plain-language line per shopper, for labels and tooltips. */
@@ -93,11 +92,14 @@ export function TreePanel({
   target,
   failed,
   follow = true,
+  wrap = false,
 }: {
   text: string | undefined;
   target: string | undefined;
   failed: boolean;
   follow?: boolean;
+  /** Wrap long lines instead of scrolling sideways. Findings uses this; the Scan stage does not. */
+  wrap?: boolean;
 }) {
   const lines = text ? text.split('\n') : [];
   const hit = targetLine(lines, target);
@@ -123,7 +125,10 @@ export function TreePanel({
   return (
     <pre
       ref={panel}
-      className="thin-scroll relative h-full overflow-auto p-3 font-mono text-[11px] leading-[1.5] text-[var(--foreground)]"
+      className={[
+        'thin-scroll relative overflow-auto p-3 font-mono text-[11px] leading-[1.5] text-[var(--foreground)]',
+        wrap ? 'max-h-[320px] whitespace-pre-wrap break-words' : 'h-full',
+      ].join(' ')}
     >
       {lines.map((line, i) => (
         <span
@@ -131,6 +136,7 @@ export function TreePanel({
           ref={i === hit ? ref : undefined}
           className={[
             '-mx-1 block rounded-sm px-1',
+            wrap ? 'whitespace-pre-wrap break-words' : '',
             i === hit
               ? failed
                 ? 'bg-[var(--fail-soft)] outline outline-1 outline-[var(--fail)]'
