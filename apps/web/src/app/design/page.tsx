@@ -6,6 +6,22 @@ import Link from 'next/link';
  */
 const screens = [
   {
+    href: '/',
+    name: 'Live flow (runner)',
+    step: 'Steps 1 to 4',
+    summary:
+      'The same four steps fed by the runner: a derived mission, four live runs, the findings and the code fixes.',
+    status: 'wired',
+  },
+  {
+    href: '/gamma',
+    name: 'Gamma flow',
+    step: 'Gamma only',
+    summary:
+      'The original dark page: run Gamma, inspect the evidence, apply the demo repair, rematch.',
+    status: 'kept',
+  },
+  {
     href: '/design/flow',
     name: 'Flow',
     step: 'Steps 1 to 4',
