@@ -10,4 +10,3 @@ export * from './attributes';
 export * from './api';
 export * from './ids';
 export * from './repository';
-export * from './codefix';

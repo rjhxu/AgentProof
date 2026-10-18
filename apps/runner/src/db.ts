@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
-import { CodeFix, Issue, Mission, Repair, Run, RepositoryConnection } from '@agentproof/shared';
+import { Issue, Mission, Repair, Run, RepositoryConnection } from '@agentproof/shared';
 import { config } from './config';
 
 /**
@@ -36,11 +36,6 @@ export function getDb(): DatabaseSync {
     CREATE TABLE IF NOT EXISTS repositories (
       id TEXT PRIMARY KEY, run_id TEXT NOT NULL UNIQUE, json TEXT NOT NULL
     );
-    CREATE TABLE IF NOT EXISTS codefixes (
-      id TEXT PRIMARY KEY, run_id TEXT NOT NULL, status TEXT NOT NULL,
-      created_at TEXT NOT NULL, json TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS codefixes_run ON codefixes(run_id);
   `);
   return db;
 }
@@ -135,27 +130,4 @@ export function getRepository(runId: string): RepositoryConnection | undefined {
 
 export function deleteRepository(runId: string): void {
   getDb().prepare('DELETE FROM repositories WHERE run_id = ?').run(runId);
-}
-
-// --- code fixes (docs/CODEFIX.md) ----------------------------------------------
-// The document never holds a token: CodeFix has no field for one, and the request's token stays
-// in the orchestrator's memory for the duration of the fix.
-export function saveCodeFix(fix: CodeFix): void {
-  CodeFix.parse(fix);
-  getDb()
-    .prepare(
-      'INSERT OR REPLACE INTO codefixes (id, run_id, status, created_at, json) VALUES (?, ?, ?, ?, ?)',
-    )
-    .run(fix.id, fix.runId, fix.status, fix.createdAt, JSON.stringify(fix));
-}
-export function getCodeFix(id: string): CodeFix | undefined {
-  const row = getDb().prepare('SELECT json FROM codefixes WHERE id = ?').get(id) as
-    { json: string } | undefined;
-  return row ? CodeFix.parse(JSON.parse(row.json)) : undefined;
-}
-export function listCodeFixesForRun(runId: string): CodeFix[] {
-  const rows = getDb()
-    .prepare('SELECT json FROM codefixes WHERE run_id = ? ORDER BY created_at')
-    .all(runId) as { json: string }[];
-  return rows.map((r) => CodeFix.parse(JSON.parse(r.json)));
 }

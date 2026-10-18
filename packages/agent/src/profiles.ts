@@ -98,21 +98,16 @@ export const AGENT_PROFILES: Record<AgentKind, AgentProfile> = {
 };
 
 /**
- * Non-agent model roles: report narration, mission generation, diagnosis (packages/diagnostics),
- * and the code-fix agent's proposal and review calls. Every default is cheap; nothing defaults to Opus.
+ * Non-agent model roles: report narration, mission generation, and diagnosis (packages/diagnostics
+ * and the future code-fix agent). Every default is cheap; nothing defaults to Opus.
  */
 export const ROLE_MODELS: Record<
-  'narrator' | 'mission' | 'diagnosis' | 'codefix' | 'review',
+  'narrator' | 'mission' | 'diagnosis',
   { xai: string; anthropic: string }
 > = {
   narrator: { xai: 'grok-4.20-0309-non-reasoning', anthropic: 'claude-haiku-5-5' },
   mission: { xai: 'grok-4.3', anthropic: 'claude-haiku-5-5' },
   diagnosis: { xai: 'grok-4.3', anthropic: 'claude-haiku-5-5' },
-  // The code-fix agent (packages/codefix): one proposal call per attempt, one advisory review.
-  // Both default to the cheapest model; AGENTPROOF_MODEL_REVIEW=claude-sonnet-5-5 is the
-  // recommended upgrade because judgement is where a stronger model earns its cost.
-  codefix: { xai: 'grok-4.3', anthropic: 'claude-haiku-5-5' },
-  review: { xai: 'grok-4.3', anthropic: 'claude-haiku-5-5' },
 };
 
 export type ModelRole = AgentKind | keyof typeof ROLE_MODELS;
@@ -125,8 +120,6 @@ const ROLE_ENV_SUFFIX: Record<ModelRole, string> = {
   narrator: 'NARRATOR',
   mission: 'MISSION',
   diagnosis: 'DIAGNOSIS',
-  codefix: 'CODEFIX',
-  review: 'REVIEW',
 };
 
 function envString(name: string): string | undefined {

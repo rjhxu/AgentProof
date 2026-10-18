@@ -67,8 +67,10 @@ describe('repository connection HTTP lifecycle', () => {
     expect(repository).toMatchObject({ ...metadata, runId: state.run!.id });
     expect(response.body).not.toContain(secret);
     expect(JSON.stringify(state.repository)).not.toContain(secret);
-    expect(state.connect).toHaveBeenCalledWith({ url, token: secret }, repository.id);
-    expect(repository.accessVia).toBe('token');
+    expect(state.connect).toHaveBeenCalledWith(
+      { url, token: secret, consent: true },
+      repository.id,
+    );
     expect((await app.inject({ url: endpoint })).json().repository).toEqual(repository);
     expect(
       (await app.inject({ method: 'POST', url: endpoint, payload: { url, consent: true } }))
@@ -82,7 +84,7 @@ describe('repository connection HTTP lifecycle', () => {
     await app.close();
   });
 
-  it('requires explicit consent and a finished run with a failed checkpoint', async () => {
+  it('requires explicit consent and a completed failed Gamma run', async () => {
     const app = await server();
     expect((await app.inject({ method: 'POST', url: endpoint, payload: { url } })).statusCode).toBe(
       400,
@@ -92,24 +94,13 @@ describe('repository connection HTTP lifecycle', () => {
       (await app.inject({ method: 'POST', url: endpoint, payload: { url, consent: true } }))
         .statusCode,
     ).toBe(409);
-    // A failed run with no failed checkpoint (an infrastructure error) is not a store problem.
     state.run!.status = 'failed';
-    const verification = state.run!.verification;
-    state.run!.verification = undefined;
+    state.run!.agent.kind = 'alpha_semantic';
     expect(
       (await app.inject({ method: 'POST', url: endpoint, payload: { url, consent: true } }))
         .statusCode,
     ).toBe(409);
     expect(state.connect).not.toHaveBeenCalled();
-    // Any agent kind may connect once a checkpoint failed: the code-fix agent works from
-    // browser-agent runs too (docs/CODEFIX.md).
-    state.run!.verification = verification;
-    state.run!.agent.kind = 'alpha_semantic';
-    expect(
-      (await app.inject({ method: 'POST', url: endpoint, payload: { url, consent: true } }))
-        .statusCode,
-    ).toBe(200);
-    expect(state.connect).toHaveBeenCalledTimes(1);
     await app.close();
   });
 
