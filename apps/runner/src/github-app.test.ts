@@ -35,8 +35,9 @@ vi.mock('@agentproof/codefix', async (importOriginal) => {
 
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentproof-github-app-'));
 process.env.AGENTPROOF_DATA_DIR = dataDir;
-const { DELIVER_SCOPE, READ_SCOPE, saveGitHubAppConfig } = await import('@agentproof/codefix');
-const { githubAppFile, githubAppStatus, resetGitHubAppCache, resolveGitHubCredential } =
+process.env.AGENTPROOF_ENV_FILE = path.join(dataDir, '.env');
+const { DELIVER_SCOPE, READ_SCOPE } = await import('@agentproof/codefix');
+const { githubAppEnvFile, githubAppStatus, resetGitHubAppCache, resolveGitHubCredential } =
   await import('./github-app');
 const { registerGitHubAppRoutes } = await import('./github-app-routes');
 
@@ -49,8 +50,28 @@ async function server() {
   return app;
 }
 
+const APP_VARS = [
+  'AGENTPROOF_GITHUB_APP_ID',
+  'AGENTPROOF_GITHUB_APP_PRIVATE_KEY',
+  'AGENTPROOF_GITHUB_APP_PRIVATE_KEY_FILE',
+  'AGENTPROOF_GITHUB_APP_SLUG',
+  'AGENTPROOF_GITHUB_APP_CLIENT_ID',
+];
+
+/** Configure the app the way a shared .env does: through the process environment. */
+function configureApp(values: { appId: number; slug?: string; clientId?: string }) {
+  vi.stubEnv('AGENTPROOF_GITHUB_APP_ID', String(values.appId));
+  vi.stubEnv('AGENTPROOF_GITHUB_APP_PRIVATE_KEY', pem);
+  if (values.slug) vi.stubEnv('AGENTPROOF_GITHUB_APP_SLUG', values.slug);
+  if (values.clientId) vi.stubEnv('AGENTPROOF_GITHUB_APP_CLIENT_ID', values.clientId);
+  resetGitHubAppCache();
+}
+
 beforeEach(() => {
-  fs.rmSync(githubAppFile(), { force: true });
+  vi.unstubAllEnvs();
+  for (const name of APP_VARS) delete process.env[name];
+  fs.rmSync(githubAppEnvFile(), { force: true });
+  fs.writeFileSync(githubAppEnvFile(), 'ANTHROPIC_API_KEY=sk-ant-test\nSTOREFRONT_PORT=5050\n');
   resetGitHubAppCache();
   stubs.findInstallation.mockReset();
   stubs.mintInstallationToken.mockReset();
@@ -72,25 +93,17 @@ describe('GitHub App status and registration', () => {
     await app.close();
   });
 
-  it('describes a configured app from the file without the private key', async () => {
-    saveGitHubAppConfig(githubAppFile(), {
-      appId: 77,
-      slug: 'agentproof-test',
-      privateKeyPem: pem,
-    });
-    resetGitHubAppCache();
+  it('describes a configured app from the environment without the private key', async () => {
+    configureApp({ appId: 77, slug: 'agentproof-test' });
     const status = githubAppStatus();
     expect(status).toEqual({
       configured: true,
       appId: 77,
       slug: 'agentproof-test',
-      source: 'file',
+      source: 'env',
       installUrl: 'https://github.com/apps/agentproof-test/installations/new',
     });
     expect(JSON.stringify(status)).not.toContain('PRIVATE');
-    if (process.platform !== 'win32') {
-      expect(fs.statSync(githubAppFile()).mode & 0o777).toBe(0o600);
-    }
   });
 
   it('registers through the manifest flow: setup page, callback with a one-time state, stored config', async () => {
@@ -115,12 +128,26 @@ describe('GitHub App status and registration', () => {
     expect(ok.body).toContain('installations/new');
     expect(ok.body).not.toContain('PRIVATE KEY');
     expect(stubs.convertManifestCode).toHaveBeenCalledWith('abc_123');
-    const stored = JSON.parse(fs.readFileSync(githubAppFile(), 'utf8')) as { appId: number };
-    expect(stored.appId).toBe(4242);
+    // Written into .env: other lines kept, the key on one line with escaped newlines, mode 0600.
+    const env = fs.readFileSync(githubAppEnvFile(), 'utf8');
+    expect(env).toContain('ANTHROPIC_API_KEY=sk-ant-test');
+    expect(env).toContain('AGENTPROOF_GITHUB_APP_ID="4242"');
+    expect(env).toContain('AGENTPROOF_GITHUB_APP_SLUG="agentproof-ab12"');
+    expect(env).toMatch(
+      /AGENTPROOF_GITHUB_APP_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\\n[^\n]*-----END PRIVATE KEY-----(\\n)?"/,
+    );
+    expect(
+      env.split('\n').filter((l) => l.startsWith('AGENTPROOF_GITHUB_APP_PRIVATE_KEY=')).length,
+    ).toBe(1);
+    if (process.platform !== 'win32') {
+      expect(fs.statSync(githubAppEnvFile()).mode & 0o777).toBe(0o600);
+    }
+    // The running process sees it at once.
     expect((await app.inject({ url: '/github/app' })).json().app).toMatchObject({
       configured: true,
       appId: 4242,
       slug: 'agentproof-ab12',
+      source: 'env',
     });
     // The state is single-use.
     const replay = await app.inject({ url: `/github/app/callback?code=abc_123&state=${state}` });
@@ -133,8 +160,7 @@ describe('credential resolution', () => {
   const repoUrl = 'https://github.com/o/r';
 
   it('mints a scoped installation token when the app is installed on the repository', async () => {
-    saveGitHubAppConfig(githubAppFile(), { appId: 77, slug: 's', privateKeyPem: pem });
-    resetGitHubAppCache();
+    configureApp({ appId: 77, slug: 's' });
     stubs.findInstallation.mockResolvedValue({
       installationId: 42,
       account: 'o',
@@ -161,8 +187,7 @@ describe('credential resolution', () => {
   });
 
   it('falls back to the request token, then to anonymous with an install hint', async () => {
-    saveGitHubAppConfig(githubAppFile(), { appId: 77, slug: 'agentproof-s', privateKeyPem: pem });
-    resetGitHubAppCache();
+    configureApp({ appId: 77, slug: 'agentproof-s' });
     stubs.findInstallation.mockResolvedValue(undefined);
     const withToken = await resolveGitHubCredential(repoUrl, 'deliver', 'ghp_request');
     expect(withToken.kind).toBe('token');
@@ -175,8 +200,7 @@ describe('credential resolution', () => {
   });
 
   it('degrades to the request token when GitHub cannot be reached', async () => {
-    saveGitHubAppConfig(githubAppFile(), { appId: 77, privateKeyPem: pem });
-    resetGitHubAppCache();
+    configureApp({ appId: 77 });
     stubs.findInstallation.mockRejectedValue(
       new Error('GitHub GET /repos/o/r/installation failed with 500'),
     );

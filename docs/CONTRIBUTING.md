@@ -31,7 +31,7 @@ pnpm --filter @agentproof/agent exec tsx --env-file-if-exists=../../.env scripts
 node docs/storefront/verify-scenarios.mjs --expect=bugs   # proves the store still has its bugs
 node scripts/run-mission.mjs --bug A --agents alpha,beta,sigma,gamma   # all four through the runner (costs about $0.07)
 node scripts/codefix.mjs --run <runId> --repo <GitHub URL> --store-root apps/storefront   # the code-fix agent on a failed run (diff mode)
-open http://localhost:4000/github/app/setup                 # once per machine: register the runner's GitHub App, then install it on the store repo
+open http://localhost:4000/github/app/setup                 # once per team: register the runner's GitHub App (writes .env), then install it on the store repo
 scripts/make-fixed-store.sh ../northwind-fixed            # the store with the five fixes, as a sibling repo on :5050
 curl localhost:4000/health
 curl localhost:5000/api/catalog.json
