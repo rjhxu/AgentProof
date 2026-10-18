@@ -9,7 +9,7 @@ import {
   renderManifestForm,
 } from '@agentproof/codefix';
 import { config } from './config';
-import { githubAppStatus, storeGitHubApp } from './github-app';
+import { githubAppStatus, listAppRepositories, storeGitHubApp } from './github-app';
 import { localAccess } from './repository-routes';
 
 const STATE_TTL_MS = 10 * 60_000;
@@ -40,14 +40,26 @@ function page(title: string, body: string): string {
  * into `.env` (AGENTPROOF_GITHUB_APP_*; the file is made mode 0600) and never rendered or
  * returned.
  *
- *   GET /github/app            status: configured, app id, slug, install URL (never the key)
- *   GET /github/app/setup      a page with one button that registers the app from a manifest
- *   GET /github/app/callback   where GitHub returns with ?code=...&state=... after registration
+ *   GET /github/app              status: configured, app id, slug, install URL (never the key)
+ *   GET /github/app/repositories the repositories the app is installed on (empty when unconfigured)
+ *   GET /github/app/setup        a page with one button that registers the app from a manifest
+ *   GET /github/app/callback     where GitHub returns with ?code=...&state=... after registration
  */
 export async function registerGitHubAppRoutes(app: FastifyInstance): Promise<void> {
   const options = { onRequest: localAccess };
 
   app.get('/github/app', options, async () => ({ app: githubAppStatus() }));
+
+  app.get('/github/app/repositories', options, async (_req, reply) => {
+    const status = githubAppStatus();
+    if (!status.configured) return { app: status, repositories: [] };
+    try {
+      return { app: status, repositories: await listAppRepositories() };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return reply.code(502).send({ error: message });
+    }
+  });
 
   app.get<{ Querystring: { name?: string; org?: string } }>(
     '/github/app/setup',

@@ -26,6 +26,8 @@ import {
   describeGitHubApp,
   findInstallation,
   installUrl,
+  listInstallationRepositories,
+  listInstallations,
   loadGitHubAppConfig,
   mintInstallationToken,
   renderManifestForm,
@@ -823,6 +825,146 @@ describe('mintInstallationToken', () => {
       { fetch: m.fetch, baseUrl: 'https://ghe.example/api/v3' },
     );
     expect(m.calls[0]!.url).toBe('https://ghe.example/api/v3/app/installations/42/access_tokens');
+  });
+});
+
+describe('listInstallations', () => {
+  const installation = (id: number, login: string, selection: 'all' | 'selected' = 'selected') => ({
+    id,
+    account: { login },
+    repository_selection: selection,
+  });
+
+  it('reads every page and keeps the id, account and selection', async () => {
+    const first = Array.from({ length: 100 }, (_, i) => installation(i + 1, `acct-${i}`));
+    const m = mockFetch((call) => {
+      if (call.url.endsWith('page=1')) return jsonResponse(200, first);
+      return jsonResponse(200, [installation(101, 'last', 'all')]);
+    });
+    const listed = await listInstallations(config, { fetch: m.fetch, nowMs: NOW_MS });
+    expect(listed).toHaveLength(101);
+    expect(listed[0]).toEqual({
+      installationId: 1,
+      account: 'acct-0',
+      repositorySelection: 'selected',
+    });
+    expect(listed[100]).toEqual({
+      installationId: 101,
+      account: 'last',
+      repositorySelection: 'all',
+    });
+    expect(m.calls).toHaveLength(2);
+    expect(m.calls[0]!.url).toBe('https://api.github.com/app/installations?per_page=100&page=1');
+    expect(m.calls[0]!.method).toBe('GET');
+    expect(jwtVerifies(bearer(m.calls[0]!))).toBe(true);
+  });
+
+  it('skips an entry with no id and stops on a short page', async () => {
+    const m = mockFetch(() =>
+      jsonResponse(200, [installation(7, 'octocat'), { account: { login: 'nope' } }]),
+    );
+    await expect(listInstallations(config, { fetch: m.fetch })).resolves.toEqual([
+      { installationId: 7, account: 'octocat', repositorySelection: 'selected' },
+    ]);
+    expect(m.calls).toHaveLength(1);
+  });
+
+  it('refuses a response that is not a list', async () => {
+    const m = mockFetch(() => jsonResponse(200, { installations: [] }));
+    await expect(listInstallations(config, { fetch: m.fetch })).rejects.toThrow(
+      'unexpected installations response',
+    );
+  });
+});
+
+describe('listInstallationRepositories', () => {
+  const TOKEN = 'ghs_listingtokenvalue1234567890';
+  const repo = (name: string, extra: Record<string, unknown> = {}) => ({
+    full_name: `octocat/${name}`,
+    private: false,
+    html_url: `https://github.com/octocat/${name}`,
+    default_branch: 'main',
+    ...extra,
+  });
+
+  function route(pages: unknown[][]) {
+    return mockFetch((call) => {
+      if (call.url.includes('/access_tokens')) {
+        return jsonResponse(201, {
+          token: TOKEN,
+          expires_at: '2026-10-18T01:00:00Z',
+          permissions: { metadata: 'read' },
+        });
+      }
+      const page = Number(/[?&]page=(\d+)/.exec(call.url)?.[1] ?? '1');
+      return jsonResponse(200, { total_count: 0, repositories: pages[page - 1] ?? [] });
+    });
+  }
+
+  it('mints a metadata-only token with no repository, then pages the list', async () => {
+    const full = Array.from({ length: 100 }, (_, i) => repo(`r${i}`));
+    const m = route([full, [repo('last', { private: true, default_branch: 'trunk' })]]);
+    const listed = await listInstallationRepositories(42, config, {
+      fetch: m.fetch,
+      nowMs: NOW_MS,
+    });
+
+    const minted = m.calls[0]!;
+    expect(minted.url).toBe('https://api.github.com/app/installations/42/access_tokens');
+    expect(JSON.parse(minted.body ?? 'null')).toEqual({ permissions: { metadata: 'read' } });
+    expect(minted.body).not.toContain('repositories');
+    expect(jwtVerifies(bearer(minted))).toBe(true);
+
+    expect(m.calls[1]!.url).toBe(
+      'https://api.github.com/installation/repositories?per_page=100&page=1',
+    );
+    expect(bearer(m.calls[1]!)).toBe(TOKEN);
+    expect(m.calls[2]!.url).toContain('page=2');
+    expect(listed).toHaveLength(101);
+    expect(listed[100]).toEqual({
+      fullName: 'octocat/last',
+      url: 'https://github.com/octocat/last',
+      private: true,
+      defaultBranch: 'trunk',
+    });
+    expect(JSON.stringify(listed)).not.toContain(TOKEN);
+  });
+
+  it('skips a repository with no default branch and builds the URL when GitHub omits it', async () => {
+    const m = route([
+      [repo('kept', { html_url: 'not a url' }), repo('dropped', { default_branch: ' ' })],
+    ]);
+    await expect(listInstallationRepositories(42, config, { fetch: m.fetch })).resolves.toEqual([
+      {
+        fullName: 'octocat/kept',
+        url: 'https://github.com/octocat/kept',
+        private: false,
+        defaultBranch: 'main',
+      },
+    ]);
+  });
+
+  it('drops the token when the repository list is unusable or metadata was not granted', async () => {
+    const unusable = mockFetch((call) =>
+      call.url.includes('/access_tokens')
+        ? jsonResponse(201, { token: TOKEN, expires_at: 'x', permissions: { metadata: 'read' } })
+        : jsonResponse(200, { repositories: 'nope' }),
+    );
+    const failure = await listInstallationRepositories(42, config, { fetch: unusable.fetch }).catch(
+      (e) => e,
+    );
+    expect((failure as Error).message).toContain('unexpected installation repositories');
+    expect((failure as Error).message).not.toContain(TOKEN);
+    expectNoKeyMaterial((failure as Error).message, pkcs8);
+
+    const short = mockFetch(() =>
+      jsonResponse(201, { token: TOKEN, expires_at: 'x', permissions: { contents: 'read' } }),
+    );
+    const denied = await listInstallationRepositories(42, config, { fetch: short.fetch }).catch(
+      (e) => e,
+    );
+    expect((denied as Error).message).toContain('metadata');
+    expect((denied as Error).message).not.toContain(TOKEN);
   });
 });
 
