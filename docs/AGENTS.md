@@ -1,6 +1,6 @@
 # The shopping agents: Alpha, Beta, Gamma, Sigma
 
-What the agents in `packages/agent` are, how each one perceives the store, and what it produces. This describes the code on `main` as of 2026-10-18. What the agents did live, on the bugged and the fixed store, is in [RESULTS.md](./RESULTS.md); the five planted bugs and their expected results are in [storefront/bugs-and-fixes.md](./storefront/bugs-and-fixes.md); the decisions behind the design are in section 9.
+What the agents in `packages/agent` are, how each one perceives the store, and what it produces. Live results are in [RESULTS.md](./RESULTS.md), the planted bugs and their expected results in [storefront/bugs-and-fixes.md](./storefront/bugs-and-fixes.md), and the design decisions in section 9.
 
 ## 1. Why four agents
 
@@ -24,7 +24,7 @@ The demo store is built so each agent hits a different outcome on the same hoodi
 - **Gamma fails** because the catalog says the medium variant is `HOODIE-001-M` but the cart API maps that id to small (`DEMO BUG B`, `apps/storefront/src/cart.ts`).
 - **Sigma passes** because it sees the chips in the screenshot, clicks one by coordinate when the tree has nothing to offer, and confirms the cart on the cart page.
 
-A recorded human session (`human_replay`) was planned as a second reference and is deferred: Sigma is the reference, and Ryan's grader (`docs/storefront/verify-scenarios.mjs`) already proves a mouse user completes every scenario.
+Sigma is the reference agent. The grader (`docs/storefront/verify-scenarios.mjs`) separately proves that a mouse user completes every scenario.
 
 ## 2. Capability contracts
 
@@ -132,19 +132,20 @@ An unusable reply (no JSON, output truncated at the token cap, a target in the w
 
 Every model call goes through `getLlm()` (`llm.ts`), which has two real adapters and a mock: Anthropic (the team's key, `ANTHROPIC_API_KEY`; strict JSON-schema output through `output_config.format`, effort through `output_config.effort`) and xAI Grok (Responses API with strict JSON-schema output and per-request cost from `usage.cost_in_usd_ticks`; `XAI_API_MODE` and `XAI_BASE_URL` tune the endpoint); `createMockLlm()` scripts responses for tests. The provider is chosen from the environment (`ANTHROPIC_API_KEY`, or `GROK_API_KEY`/`XAI_API_KEY` for xAI, or `AGENTPROOF_LLM_PROVIDER` to force one). Nothing outside `llm.ts` touches a provider.
 
-Cost rule (Zach, 2026-10-17): the cheapest model everywhere, Sonnet for Beta and Sigma. On Anthropic that is `claude-haiku-5-5` for Alpha, the narrator, the mission generator and diagnosis, and `claude-sonnet-5-5` for Beta and Sigma. Nothing defaults to Opus; a test guards it.
+Cost rule: the cheapest model everywhere, Sonnet for Beta and Sigma. On Anthropic that is `claude-haiku-5-5` for Alpha, the narrator, the mission generator and diagnosis, and `claude-sonnet-5-5` for Beta and Sigma. Nothing defaults to Opus; a test guards it.
 
-Models are tiered in `profiles.ts`, overridable per role with `AGENTPROOF_MODEL_<ALPHA|BETA|SIGMA|NARRATOR|MISSION|DIAGNOSIS>` and globally with `AGENTPROOF_MODEL`:
+Models are tiered in `profiles.ts`, overridable per role with `AGENTPROOF_MODEL_<ROLE>` and globally with `AGENTPROOF_MODEL`:
 
-| Role              | xAI default                    | Anthropic default   | Effort | Steps | Why                                                                                          |
-| ----------------- | ------------------------------ | ------------------- | ------ | ----- | -------------------------------------------------------------------------------------------- |
-| Alpha             | `grok-4.3`                     | `claude-haiku-5-5`  | low    | 20    | The cheap path: text tokens only. If the store needs more than this, it is not agent-ready.  |
-| Beta              | `grok-4.3`                     | `claude-sonnet-5-5` | medium | 20    | Sonnet, an image every step (detail high): what vision buys and what it costs.               |
-| Sigma             | `grok-4.7`                     | `claude-sonnet-5-5` | high   | 30    | The ceiling: strongest model, all senses. Shows what the ceiling costs.                      |
-| Gamma             | none                           | none                | n/a    | 1     | No model call.                                                                               |
-| Narrator          | `grok-4.20-0309-non-reasoning` | `claude-haiku-5-5`  | n/a    | n/a   | Report prose only; cheapest, no reasoning tokens.                                            |
-| Mission generator | `grok-4.3`                     | `claude-haiku-5-5`  | low    | n/a   | Structured extraction only.                                                                  |
-| Diagnosis         | `grok-4.3`                     | `claude-haiku-5-5`  | n/a    | n/a   | `packages/diagnostics` and the future code-fix agent. Raise it per run if Haiku falls short. |
+| Role              | xAI default                    | Anthropic default   | Effort | Steps | Why                                                                                         |
+| ----------------- | ------------------------------ | ------------------- | ------ | ----- | ------------------------------------------------------------------------------------------- |
+| Alpha             | `grok-4.3`                     | `claude-haiku-5-5`  | low    | 20    | The cheap path: text tokens only. If the store needs more than this, it is not agent-ready. |
+| Beta              | `grok-4.3`                     | `claude-sonnet-5-5` | medium | 20    | Sonnet, an image every step (detail high): what vision buys and what it costs.              |
+| Sigma             | `grok-4.7`                     | `claude-sonnet-5-5` | high   | 30    | The ceiling: strongest model, all senses. Shows what the ceiling costs.                     |
+| Gamma             | none                           | none                | n/a    | 1     | No model call.                                                                              |
+| Narrator          | `grok-4.20-0309-non-reasoning` | `claude-haiku-5-5`  | n/a    | n/a   | Report prose only; cheapest, no reasoning tokens.                                           |
+| Mission generator | `grok-4.3`                     | `claude-haiku-5-5`  | low    | n/a   | Structured extraction only.                                                                 |
+| Diagnosis         | `grok-4.3`                     | `claude-haiku-5-5`  | n/a    | n/a   | `packages/diagnostics`. Raise it per run if Haiku falls short.                              |
+| Code fix, review  | `grok-4.3`                     | `claude-haiku-5-5`  | n/a    | n/a   | The code-fix proposer and its advisory reviewer ([CODEFIX.md](./CODEFIX.md)).               |
 
 Every call returns an `LlmUsage` (calls, input and output tokens, image inputs, estimated USD). The loop sums it per step, the narrator call is added to the run total, and the mission report compares agents side by side with a relative-cost column. When the provider reports no cost, `estimateCostUsd()` uses the price table in `profiles.ts`; unknown models show "unknown" rather than a wrong number.
 
@@ -159,7 +160,7 @@ Every call returns an `LlmUsage` (calls, input and output tokens, image inputs, 
 | `actions.ts`                                         | Strict JSON schema for `AgentActionDraft`, `toAgentAction()`, `summarizeStep()`                                           |
 | `policy.ts`                                          | `checkAction()`, `isPaymentControl()`, `hostIsAllowed()`                                                                  |
 | `browser-agent.ts`                                   | The observe, decide, police, act, record loop; evidence files; the coordinate payment guard                               |
-| `gamma.ts`                                           | Gamma (Vihan)                                                                                                             |
+| `gamma.ts`                                           | Gamma: catalog, cart API, read-back                                                                                       |
 | `assess.ts`                                          | Cart fetch through cookies, verifier input from a browser run, Gamma verification glue, screenshot evidence lookup        |
 | `scenarios.ts`                                       | Scenarios A to E and the control, verbatim from the answer key                                                            |
 | `narrative.ts`                                       | The narrator call with a deterministic fallback                                                                           |
@@ -173,7 +174,7 @@ Every call returns an `LlmUsage` (calls, input and output tokens, image inputs, 
 
 ## 6. Reports and attribution
 
-Reports are the hand-off from the agents to the dashboard and to the future code-fix agent. Schemas live in `packages/shared/src/report.ts`; everything in them is written by code except `narrative`.
+Reports are the hand-off from the agents to the dashboard and to the code-fix agent. Schemas live in `packages/shared/src/report.ts`; everything in them is written by code except `narrative`.
 
 **AgentReport**, one per run, `<runId>/report.json` and `report.md` under `data/artifacts/`: the agent's profile (senses, grammars, model, provider, effort), the verifier's status and checkpoints, the observed cart, the step log with screenshot and snapshot paths, the failure point (the step where the run diverged, what was attempted, the outcome, and an excerpt of what the agent could perceive there), the narrative (the model's own account, labelled as such; deterministic text when the narrator call fails or times out), usage, duration and artifacts.
 
@@ -203,19 +204,19 @@ pnpm cli -- --agent sigma --bug C --headed       # alpha | beta | sigma | gamma;
 pnpm cli -- --agent alpha --prompt "..."         # mission from the generator instead of a scenario
 pnpm --filter @agentproof/agent exec tsx --env-file-if-exists=../../.env scripts/scripted-run.ts alpha A
                                                  # real browser, scripted mock model: the deterministic fallback
-node docs/storefront/verify-scenarios.mjs --expect=bugs   # Ryan's grader for the store itself
+node docs/storefront/verify-scenarios.mjs --expect=bugs   # the grader for the store itself
 node scripts/run-mission.mjs --bug A --agents alpha,beta,sigma,gamma   # all four through the runner, with the mission report
 scripts/make-fixed-store.sh ../northwind-fixed   # the store with the five fixes applied, as its own repo (then --store http://localhost:5050)
 ```
 
 Through the runner (`pnpm dev:runner`): `POST /missions/fixture { bug, storeUrl? }` inserts a scenario mission, `POST /missions/:id/runs { agents }` starts runs, `GET /runs/:id/events` streams steps, and the reports come back from `GET /runs/:id/report(.md)`, `GET /missions/:id/report(.md)` and `GET /artifacts/*`.
 
-Validation state (2026-10-18): the workspace typechecks and 344 tests pass. Every scenario was run with all four agents on the bugged store and with Alpha (plus Gamma on the hoodie) on the fixed store; every verdict matches the answer key and attribution names the right cause. Sigma costs 21x to 24x Alpha; an Alpha run costs under a cent. The full tables, mission ids and what was changed because of the runs are in [RESULTS.md](./RESULTS.md).
+Expected outcomes for every agent and scenario, bugged and fixed, are in [RESULTS.md](./RESULTS.md).
 
 ## 8. Things that bite
 
 - **Determinism.** The same mission runs on camera and in the rematch. Fixed system prompt, capped observation (6,000 characters of tree, 2,000 of text, five steps of history plus the whole-run summary), a two-attempt rule on the same target, and `fail` after five consecutive stuck steps all push toward the same path each time. The scripted run removes the model entirely when the demo must not flake.
-- **The model forgets what scrolled off.** The five-step history is what keeps a run cheap, but a rule such as "clear the cart at most once" needs the whole run. The `RUN SUMMARY` block (steps taken, cart clears, failed attempts per target) is computed by code from every step and sits in each user turn; the live run that cleared twice before it existed is in RESULTS.md.
+- **The model forgets what scrolled off.** The five-step history is what keeps a run cheap, but a rule such as "clear the cart at most once" needs the whole run. The `RUN SUMMARY` block (steps taken, cart clears, failed attempts per target) is computed by code from every step and sits in each user turn; see RESULTS.md for the run that motivated it.
 - **Absent controls fail fast.** A role target that is not in the tree is reported at once as `no <role> "<name>" in the accessibility tree` (`resolveRoleTarget()`), so a failed step costs no wall-clock and the detail tells the code-fix agent what was missing. Only a control that exists gets Playwright's full action timeout.
 - **Two attempts, five strikes.** `MAX_ATTEMPTS_PER_CONTROL` (prompt) must stay below `STUCK_STEP_LIMIT` (loop). If they were equal the harness would fail Alpha before it could continue with the default size, and the Bug A report would show an empty cart instead of the mismatch.
 - **Cost.** Each step is a model call. Alpha's tree is a few thousand tokens; Beta's screenshot is more; Sigma sends both. Output caps include reasoning tokens, so medium and high effort get a larger cap (8192) than low (4096); `decide()` leaves the cap to `llm.ts`.
@@ -228,14 +229,12 @@ Validation state (2026-10-18): the workspace typechecks and 344 tests pass. Ever
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Agent model     | Perception strategies (Alpha semantic, Beta vision, Gamma structured), not capability tiers                                                                              | A failure must map to a store property so a repair exists. Tiers blame the agent, not the store.                                                              |
 | Sigma           | A fourth agent with every sense and both target grammars on the strongest allowed model: the human-like reference                                                        | Shows what a powerful agent achieves on the same store, so the gap between it and the others is the bug. If Sigma fails, the store is broken for every agent. |
-| Human baseline  | Deferred. Ryan's mouse-driven grader proves a human completes every scenario; Sigma is the reference in attribution                                                      | Saved a day of work for a signal the grader already gives.                                                                                                    |
 | Attribution     | Deterministic rule over the cross-agent pass/fail pattern (`packages/verifier/src/attribute.ts`), before any model writes a diagnosis                                    | Consistent categories across takes; the diagnosis anchors on a code-derived prior.                                                                            |
 | Alpha targeting | Role + exact accessible name only. No text or CSS fallback                                                                                                               | The Bug A snapshot still contains the text "S M L"; a text fallback would click past the bug.                                                                 |
 | Beta targeting  | Coordinates only; `select` removed from its action set                                                                                                                   | A vision agent must prove it can operate the page from pixels alone.                                                                                          |
 | Loop            | One loop for Alpha, Beta and Sigma, branched on what the profile perceives and which grammars it accepts; Stagehand assessed and rejected (no autonomous agent, no Grok) | One policy layer, one evidence format, one report shape.                                                                                                      |
-| Gamma           | Vihan's deterministic inspector, no model, cost line zero                                                                                                                | The structured path is about data correctness, not perception; a model would add noise.                                                                       |
-| Provider        | Provider-neutral `getLlm()`; Anthropic live (the xAI hackathon key had no credits), xAI adapter kept                                                                     | Switching keys must not touch agent code.                                                                                                                     |
+| Gamma           | A deterministic inspector, no model, cost line zero                                                                                                                      | The structured path is about data correctness, not perception; a model would add noise.                                                                       |
+| Provider        | Provider-neutral `getLlm()`; Anthropic by default, xAI adapter kept                                                                                                      | Switching keys must not touch agent code.                                                                                                                     |
 | Models          | Cheapest everywhere, Sonnet for Beta and Sigma, never Opus by default; one `diagnosis` role for the fix side                                                             | The thesis is about cost; the reports must show it.                                                                                                           |
 | Verdicts        | Code decides pass/fail, budget math, variant comparison and attribution; the model writes narratives and hypotheses, labelled                                            | Judges and the code-fix agent need facts they can trust.                                                                                                      |
-| Repairs         | `git apply` of a unified diff restricted to the store; Ryan's reference patches are the oracle; the fixed store is an exported sibling repo                              | Clean history, reviewable diffs, and a repair path that also works on the standalone repo.                                                                    |
-| Ownership       | Zach: `packages/agent`, `apps/web`. Ryan: `apps/storefront`, `docs/storefront`. Vihan: `apps/runner`, `packages/verifier`, `packages/diagnostics`, `gamma.ts`            | Reflects who built what.                                                                                                                                      |
+| Repairs         | `git apply` of a unified diff restricted to the store; the reference patches are the oracle; the fixed store is an exported sibling repo                                 | Clean history, reviewable diffs, and a repair path that also works on the standalone repo.                                                                    |
