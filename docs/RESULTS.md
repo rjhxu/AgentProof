@@ -1,65 +1,69 @@
-# Live validation results
+# Results
 
-Every agent on every scenario, against the store with its planted bugs and against the same store with the five reference fixes applied. Produced on 2026-10-18 (the night before submission) through the runner API with `scripts/run-mission.mjs`. The reports live under `data/artifacts/` (gitignored); the mission ids are listed so the files can be found on the machine that ran them.
+Live validation, 2026-10-18, on Anthropic models. Alpha, Beta, the narrator and the code-fix roles ran on `claude-haiku-5-5`. Beta's default has since moved to Sonnet. Sigma ran on `claude-sonnet-5-5`, and Gamma makes no model call. Two stores:
 
-Provider: Anthropic. Models: Alpha, Beta and the narrator on `claude-haiku-5-5`; Sigma on `claude-sonnet-5-5`; Gamma makes no model call. Stores: `apps/storefront` at `main` `89df4d4` on port 5000 (bugged), and the same source with every patch from `docs/storefront/patches/` applied, exported with `scripts/make-fixed-store.sh ../northwind-fixed`, on port 5050 (fixed). Ryan's grader agrees with both: `--expect=bugs` on 5000 reports every bug present and the control OK; `--expect=fixed` on 5050 reports every bug FIXED.
+- **Bugged:** `apps/storefront` with its five planted bugs.
+- **Fixed:** the same store with the reference patches applied (`scripts/make-fixed-store.sh`).
 
-## Bugged store: four agents on every scenario
+An independent grader (`docs/storefront/verify-scenarios.mjs`) agrees with both. Reports are under `data/artifacts/` on the machine that ran them, which is gitignored. The ids below locate them.
 
-Cost is the run's estimate from the price table, narrator call included. Steps count the agent's actions including its final done or fail.
+A run that disagrees with these tables is a regression or a flaky model turn. Run it once more before you debug.
 
-| Scenario                                | Alpha (tree only, Haiku)                                                                  | Beta (screenshots, Haiku) | Sigma (all senses, Sonnet) | Gamma (catalog + cart API)                              | Attribution                                                           |
-| --------------------------------------- | ----------------------------------------------------------------------------------------- | ------------------------- | -------------------------- | ------------------------------------------------------- | --------------------------------------------------------------------- |
-| A: black hoodie, M, under $60           | **failed** `correct_size_identified` (cart holds S); 6 steps, $0.0025                     | passed; 5 steps, $0.0027  | passed; 5 steps, $0.0540   | **failed** `cart_matches_variant` (the API maps M to S) | Alpha: semantic interface problem. Gamma: product data inconsistency. |
-| C: crewneck, navy, L, under $70         | **failed** `correct_color_identified` (cart holds forest); 18 steps, $0.0074              | passed; 7 steps, $0.0034  | passed; 6 steps, $0.0711   | passed                                                  | Alpha: semantic interface problem.                                    |
-| D: merino socks, M, quantity 3          | **failed** `cart_quantity_correct` (1 of 3); 7 steps, $0.0030                             | passed; 7 steps, $0.0035  | passed; 7 steps, $0.0730   | passed                                                  | Alpha: semantic interface problem.                                    |
-| E: studio headphones, wired, under $100 | **failed** `added_to_cart` (cart empty: the buy box is not in the tree); 6 steps, $0.0028 | passed; 4 steps, $0.0020  | passed; 4 steps, $0.0439   | passed                                                  | Alpha: semantic interface problem.                                    |
-| Control: canvas tote                    | passed; 4 steps, $0.0019                                                                  | passed; 4 steps, $0.0023  | passed; 4 steps, $0.0406   | passed                                                  | none                                                                  |
+## Agents on the bugged store
 
-Every cell is what `docs/storefront/bugs-and-fixes.md` predicts. Sigma costs 21x to 24x Alpha on every scenario; Beta costs about the same as Alpha on pages this small; Gamma costs nothing. Sigma's own claims say which step it did by coordinates (the chip on A, the swatch on C, the `+` on D): that is the mismatch between tree and screen that the hybrid agent exists to surface.
+| Scenario                       | Alpha (tree, Haiku)                            | Beta (screens, Haiku) | Sigma (all, Sonnet) | Gamma (API)                       |
+| ------------------------------ | ---------------------------------------------- | --------------------- | ------------------- | --------------------------------- |
+| A: black hoodie, M, under $60  | **failed** `correct_size_identified`, $0.0025  | passed, $0.0027       | passed, $0.0540     | **failed** `cart_matches_variant` |
+| C: crewneck, navy, L           | **failed** `correct_color_identified`, $0.0074 | passed, $0.0034       | passed, $0.0711     | passed                            |
+| D: merino socks, M, quantity 3 | **failed** `cart_quantity_correct`, $0.0030    | passed, $0.0035       | passed, $0.0730     | passed                            |
+| E: studio headphones, wired    | **failed** `added_to_cart`, $0.0028            | passed, $0.0020       | passed, $0.0439     | passed                            |
+| Control: canvas tote           | passed, $0.0019                                | passed, $0.0023       | passed, $0.0406     | passed                            |
 
-Mission ids: A `mis_4d8c056edb7d`, C `mis_6177b3fb3842`, D `mis_26da8fa2ca09`, E `mis_99b33da6911e`, control `mis_b431779e01c1`.
+Every cell matches the answer key in [storefront/bugs-and-fixes.md](storefront/bugs-and-fixes.md). Attribution named a semantic interface problem for each Alpha failure and a product data inconsistency for Gamma on A. Sigma costs 21 to 24 times what Alpha does, and it reports which steps it had to do by coordinates: the mismatch between the tree and the screen that the bug creates.
 
-Earlier CLI runs the same evening agree: Alpha on A three times (one run before prompt tuning stopped with an empty cart; the two after fail on size), C twice, D three times, E once, the control once; Beta and Sigma on A twice each; Gamma on the hoodie mission many times.
+On the fixed store, the same Alpha with the same prompts passes A, C, D, E and the control ($0.0016 to $0.0027 per run), and Gamma passes A. Only the store changed.
 
-## Fixed store: the cheapest agent passes
+Mission ids. Bugged: A `mis_4d8c056edb7d`, C `mis_6177b3fb3842`, D `mis_26da8fa2ca09`, E `mis_99b33da6911e`, control `mis_b431779e01c1`. Fixed: A `mis_fef5fb3a30b1`, C `mis_714309b79284`, D `mis_e4ae8325549d`, E `mis_0751f66d8b2a`, control `mis_f0c8af7fb1fe`.
 
-Same agents, same prompts, same models. Only the store changed.
+## Code-fix agent on the private store repository
 
-| Scenario | Alpha                                                                              | Gamma                                 |
-| -------- | ---------------------------------------------------------------------------------- | ------------------------------------- |
-| A        | passed; 5 steps, $0.0020 (`select "M" in Size` works: the chips are a radio group) | passed (`HOODIE-001-M` resolves to M) |
-| C        | passed; 6 steps, $0.0024                                                           | not run                               |
-| D        | passed; 7 steps, $0.0027 (two clicks on `button:Increase quantity`)                | not run                               |
-| E        | passed; 6 steps, $0.0024                                                           | not run                               |
-| Control  | passed; 4 steps, $0.0016                                                           | not run                               |
+Target: `rjhxu/northwind-storefront` (the bugged store exported with its hint comments stripped, tag `baseline`). Every fix ran in `pull_request` mode with typecheck, review and rematch enabled.
 
-Mission ids: A `mis_fef5fb3a30b1`, C `mis_714309b79284`, D `mis_e4ae8325549d`, E `mis_0751f66d8b2a`, control `mis_f0c8af7fb1fe`.
+| Scenario | Root-cause file (answer key) | Agent's change                                                 | Diff  | Checks | Rematch | Grader | Draft PR                                                   | Fix cost |
+| -------- | ---------------------------- | -------------------------------------------------------------- | ----- | ------ | ------- | ------ | ---------------------------------------------------------- | -------- |
+| A        | `views.ts`                   | radio-group roles, names, `aria-checked` and keyboard on chips | +5/−4 | 7/7    | passed  | FIXED  | [#1](https://github.com/rjhxu/northwind-storefront/pull/1) | $0.0037  |
+| B        | `cart.ts`                    | removed the `HOODIE-001-M` to S entry from the legacy map      | +0/−1 | 7/7    | passed  | FIXED  | [#2](https://github.com/rjhxu/northwind-storefront/pull/2) | $0.0024  |
+| C        | `swatches.ts`, `catalog.ts`  | swatch labels reordered to match the variant order             | +1/−1 | 7/7    | passed  | FIXED  | [#3](https://github.com/rjhxu/northwind-storefront/pull/3) | $0.0027  |
+| D        | `quantity-stepper.ts`        | `aria-label` on plus and minus, a named `role="group"`         | +3/−3 | 7/7    | passed  | FIXED  | [#4](https://github.com/rjhxu/northwind-storefront/pull/4) | $0.0028  |
+| E        | `feature-layout.ts`          | `aria-hidden` removed from the stage around the buy form       | +1/−1 | 7/7    | passed  | FIXED  | [#5](https://github.com/rjhxu/northwind-storefront/pull/5) | $0.0025  |
 
-The whole validation was 20 model-driven runs and 6 Gamma runs, about $0.33 in tokens.
+- **Every fix succeeded on the first attempt.** Each touched one file, the one the answer key names (for C, the data half of a two-file cause). The grader found no collateral damage: the human shopper still completes every scenario, and the control is unaffected.
+- **Cost.** A fix is two Haiku calls, about 15k input and 2k to 4k output tokens. All five scenarios end to end, including the failing runs and the proof reruns, cost about $0.04.
+- **Merged together**, the five branches (5 files, +10/−10) grade FIXED on every scenario, and Alpha and Gamma pass every mission against that store.
+- **The reviewer is advisory.** Haiku rejected fix A over keyboard support, which is correct for a radio group. The prompt was corrected afterwards. `AGENTPROOF_MODEL_REVIEW=claude-sonnet-5-5` gives sharper reviews for about a cent per fix.
+- **GitHub App.** A sixth fix (scenario B again) ran with no token in any request. The clone used a `contents: read` installation token, and the push and draft PR [#6](https://github.com/rjhxu/northwind-storefront/pull/6) used a separate `contents: write` and `pull_requests: write` token.
 
-## What the runs showed, and what changed because of them
+Fix ids: A `fix_34c85d45e822`, B `fix_4259e7e2078b`, C `fix_fca71d3f042e`, D `fix_5f393cb011d0`, E `fix_96a077ee5541`.
 
-- **Alpha on C cleared the cart twice** although the rules allow one clear. The user turn only showed the last five steps, so by the second contradiction the first clear was out of view. Fix: every user turn now carries a `RUN SUMMARY` computed from the whole run (steps taken, cart clears, failed attempts per target), and the rules point at it. Confirmed with one CLI run (`run_e0a1671bf45c`): one clear, then "the cart was already cleared once this run, so I did not clear again"; 12 steps and $0.0049 instead of 18 and $0.0074.
-- **Alpha on E stopped with a raw message**, `stuck: locator.click: Timeout 5000ms exceeded.`, after four clicks that each waited the full five seconds. Fix: a `role:name` click or type on a control absent from the tree now fails at once with `no button "Add to cart" in the accessibility tree`, and the stuck summary names the last action. Confirmed with one CLI run (`run_9450cd748e1a`): instant, readable failures, and the agent ended with an explicit `fail` naming the missing control.
-- **The deprecated Claude client** that `packages/diagnostics` still uses defaulted to Opus. It now takes its model from a `diagnosis` role in `profiles.ts` (Haiku by default; `AGENTPROOF_MODEL_DIAGNOSIS` overrides it).
-- **Beta sometimes clicks the same coordinate twice** in a row (the size chip on C). Harmless: the second click is a no-op on a selected option.
-- **No run reached a payment control.** Both store logs are free of the `PLACE ORDER` error and the runner log has no errors.
+## What the runs changed
+
+- **Alpha cleared the cart twice on C** because the first clear had scrolled out of its five-step history. Every user turn now carries a `RUN SUMMARY` computed from the whole run.
+- **Alpha on E waited out Playwright timeouts** on a control that was not in the tree. Absent role targets now fail at once with `no button "Add to cart" in the accessibility tree`.
+- **No run reached a payment control.** The store logs show no `PLACE ORDER` error.
 
 ## Reproduce
 
 ```bash
-pnpm dev:store                                    # bugged store on :5000
-pnpm dev:runner                                   # runner on :4000
-node scripts/run-mission.mjs --bug A --agents alpha,beta,sigma,gamma
-node scripts/run-mission.mjs --bug C --agents alpha,beta,sigma,gamma   # likewise D, E, control
+pnpm dev:store && pnpm dev:runner
+node scripts/run-mission.mjs --bug A --agents alpha,beta,sigma,gamma        # likewise C, D, E, control
 
-scripts/make-fixed-store.sh ../northwind-fixed    # once: the store with the five patches applied, as its own repo
+scripts/make-fixed-store.sh ../northwind-fixed
 (cd ../northwind-fixed && STOREFRONT_PORT=5050 npm run start)
 node scripts/run-mission.mjs --bug A --agents alpha,gamma --store http://localhost:5050
 STORE_URL=http://localhost:5050 node docs/storefront/verify-scenarios.mjs --expect=fixed
 
-pnpm cli -- --agent alpha --bug C                 # one agent, no runner; add --store http://localhost:5050 for the fixed store
+node scripts/codefix.mjs --run <failedRunId> --repo https://github.com/rjhxu/northwind-storefront \
+  --store-root "" --mode pull_request --rematch
 ```
 
-A four-agent mission costs about $0.06 to $0.08 (Sigma is most of it); an Alpha run costs under a cent.
+A four-agent mission costs about $0.06 to $0.08. An Alpha run costs under a cent.
