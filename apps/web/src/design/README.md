@@ -1,6 +1,6 @@
 # Design sandbox
 
-This folder and the routes under `src/app/design/` exist to settle the dashboard's interface and experience before anything is wired to the runner. The brief, the decisions log and the wiring plan are in [`docs/DESIGN.md`](../../../../docs/DESIGN.md).
+This folder and the routes under `src/app/design/` exist to settle the dashboard's interface and experience before anything is wired to the runner. The flow, principles and visual system are in [`docs/DESIGN.md`](../../../../docs/DESIGN.md).
 
 ## Rules
 
@@ -8,7 +8,7 @@ This folder and the routes under `src/app/design/` exist to settle the dashboard
 2. **Components take props and nothing else.** Types come from `@agentproof/shared`. No module-level state, no environment variables.
 3. **Fixtures are recorded reports, not hand-written objects.** `fixtures/index.ts` parses each JSON with the shared Zod schema, so a backend schema change shows up at `pnpm typecheck` and `pnpm --filter @agentproof/web test`, not at wiring time. The two hand-written exceptions (the Gamma hypothesis text and the repository connection) are flagged in the index.
 4. **Do not touch `src/app/layout.tsx`, `src/components/`, or `src/lib/`** from the sandbox. `src/app/page.tsx` is now the live flow (`src/live/live-flow.tsx`, fed by the runner) and the Gamma flow kept working at `/gamma`; a sandbox change reaches the live page only through the step components' props.
-5. **No new dependencies without a line in the decisions table** in `docs/DESIGN.md`.
+5. **No new dependencies without a line in Key decisions** in `docs/DESIGN.md`.
 
 ## Layout
 
