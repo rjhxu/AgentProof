@@ -101,10 +101,8 @@ Checks: `pnpm typecheck && pnpm test && pnpm format:check` (what CI runs) and `p
 | [AGENTS.md](docs/AGENTS.md)                      | The four agents: perception, models, cost, reports          |
 | [CODEFIX.md](docs/CODEFIX.md)                    | The code-fix pipeline, GitHub access, threat model          |
 | [SECURITY.md](docs/SECURITY.md)                  | Trust boundaries, safeguards, known limitations             |
-| [RESULTS.md](docs/RESULTS.md)                    | Live validation of the agents and the code-fix agent        |
-| [DEMO.md](docs/DEMO.md)                          | Running the demo, fallbacks, pre-flight checklist           |
+| [RESULTS.md](docs/RESULTS.md)                    | Live validation of the agents and the code-fix agent        
 | [DESIGN.md](docs/DESIGN.md)                      | Dashboard flow and visual system                            |
-| [CONTRIBUTING.md](docs/CONTRIBUTING.md)          | Setup, testing, conventions, ownership                      |
 | [storefront/](docs/storefront/bugs-and-fixes.md) | The test store's planted bugs, reference fixes and grader   |
 
 ## Status and limits
