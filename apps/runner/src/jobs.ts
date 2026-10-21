@@ -29,8 +29,7 @@ import { generateRunReport, regenerateMissionReport } from './reports';
  * Minimal async job manager: a FIFO queue with a concurrency cap.
  * Good enough for the hackathon; no Redis, no workers.
  *
- * OWNER: Vihan. The browser-run branch and the report step were added in W5 (Zach). The Gamma
- * branch keeps Vihan's behaviour: its evidence and verification block moved verbatim into
+ * The Gamma branch's evidence and verification block moved verbatim into
  * gammaVerification() in @agentproof/agent (assess.ts) so the CLI shares it, and the run now
  * finishes through finishRun() like every other agent.
  */
@@ -77,7 +76,7 @@ function errorMessage(err: unknown): string {
 type FinalStatus = 'passed' | 'failed' | 'error';
 
 /**
- * Report first, then the verdict (W5, Zach).
+ * Report first, then the verdict.
  *
  * The stored status stays as it was ('verifying') while the report is built, so a client polling
  * GET /runs/:id never sees passed/failed without a reportPath (GET /runs/:id/report would 404 in
@@ -160,7 +159,7 @@ export async function executeRun(runId: string, missionOverride?: Mission): Prom
         outcome: 'done',
         summary: result.notes.join(' ') || 'Inspected the catalog feed and the cart API.',
       };
-      // Gamma runs no model: "none" and a zero cost line keep it out of the cost ratio (W5).
+      // Gamma runs no model: "none" and a zero cost line keep it out of the cost ratio.
       run = await finishRun(run, mission, overallStatus(verification), {
         verification,
         claim,
@@ -170,7 +169,7 @@ export async function executeRun(runId: string, missionOverride?: Mission): Prom
       return;
     }
 
-    // ---- browser agents: Alpha, Beta, Sigma (W5, Zach) ---------------------------------------
+    // ---- browser agents: Alpha, Beta, Sigma ---------------------------------------
     // Typed structurally (assess.ts) so the post-skeleton fields of the loop's result (cookies,
     // usage, resolvedModel) are optional here and this file compiles against either form.
     const result: BrowserRunResult = await runBrowserAgent(mission, run.agent, artifactDir, {

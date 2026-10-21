@@ -27,7 +27,6 @@ import type {
 
 /**
  * Typed client for the runner API. Contract: packages/shared/src/api.ts.
- * OWNER: Zach.
  */
 /** Base URL of the runner API. Exported so a page can build its own event-stream URLs from it. */
 export const RUNNER_URL = process.env.NEXT_PUBLIC_RUNNER_URL ?? 'http://localhost:4000';
@@ -82,7 +81,7 @@ export const api = {
   diagnose: (runId: string) =>
     call<DiagnoseResponse>(`/runs/${runId}/diagnose`, { method: 'POST' }),
 
-  // ---- scenarios, reports and artifacts (W5, Zach) ---------------------------------------------
+  // ---- scenarios, reports and artifacts ---------------------------------------------
   /** Insert one of the storefront's known scenario missions (A-E, control); no model call. */
   fixtureMission: (body: FixtureMissionRequest) =>
     call<FixtureMissionResponse>('/missions/fixture', {

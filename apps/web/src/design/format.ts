@@ -85,8 +85,6 @@ export function costLine(
 /**
  * "22× Alpha" for a shopper dearer than the cheapest one, from the report's relative cost;
  * undefined for the cheapest shopper itself and for anything at or under its price.
- * TODO(zach): finalCosts in flow/scan-step.tsx formats the same string; point it here once the
- * Scan pass in flight has landed.
  */
 export function relativeCostLabel(
   rows: CostRow[],
@@ -104,7 +102,7 @@ export function relativeCostLabel(
 
 /**
  * The recorded detail without its JSON parentheticals: "Requested HOODIE-001-M; cart returned
- * HOODIE-001-S." TODO(zach): flow/scan-step.tsx keeps a private copy until its pass lands.
+ * HOODIE-001-S."
  */
 export function plainDetail(detail: string | undefined): string | undefined {
   return detail?.replace(/\s*\(\{[^)]*\}\)/g, '');

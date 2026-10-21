@@ -8,8 +8,6 @@ import { colorSwatches } from './swatches';
 
 /**
  * Server-rendered HTML. Deliberately plain so Playwright behaviour is predictable.
- *
- * OWNER: Ryan.
  */
 
 export function layout(title: string, body: string, cartCount = 0): string {

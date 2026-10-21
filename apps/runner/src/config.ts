@@ -12,7 +12,7 @@ export const config = {
   },
   /**
    * Cross-agent mission reports: <artifactsDir>/missions/<missionId>/report.{json,md}. They live
-   * inside the artifacts dir so GET /artifacts/* serves them like every run report. (W5, Zach)
+   * inside the artifacts dir so GET /artifacts/* serves them like every run report.
    */
   get missionReportsDir() {
     return path.join(this.artifactsDir, 'missions');
@@ -24,7 +24,7 @@ export const config = {
   storefrontDir: path.join(REPO_ROOT, 'apps', 'storefront'),
   /**
    * Storefront base URL for fixture missions and the hoodie demo. STOREFRONT_URL wins (macOS
-   * usually holds :5000); otherwise localhost on STOREFRONT_PORT. (W5, Zach)
+   * usually holds :5000); otherwise localhost on STOREFRONT_PORT.
    */
   storeUrl:
     process.env.STOREFRONT_URL?.trim() ||

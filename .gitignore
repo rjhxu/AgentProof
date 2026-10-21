@@ -13,7 +13,7 @@ build/
 .env
 .env.*
 !.env.example
-data/github-app.json
+*.pem
 
 # test evidence (screenshots, traces, recordings, sqlite)
 data/artifacts/*
@@ -41,6 +41,7 @@ apps/web/next-env.d.ts
 # Local AI-assistant guidance (per developer, not shared)
 CLAUDE.md
 .claude/
+.cursor/
 
 # GitHub App credentials written by the manifest flow (apps/runner/src/github-app.ts)
 data/github-app.json

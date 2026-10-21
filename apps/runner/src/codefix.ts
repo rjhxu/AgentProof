@@ -75,8 +75,6 @@ import { commitAndPush, createWorktree, readSnapshotFile, removeWorktree } from 
  * every status and every check; the model's text lives only in attempts[].proposal and review.
  * The request token never enters the document: it stays in this module's memory for the
  * duration of the fix and reaches git and GitHub only for the push and the pull request.
- *
- * OWNER: Zach (branch codefix-agent).
  */
 
 const MAX_CANDIDATE_FILES = 60;

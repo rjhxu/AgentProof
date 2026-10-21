@@ -34,8 +34,6 @@ import { ARIA_ROLES, chooseOption, parseTarget, resolveRoleTarget, setQuantity }
  *
  * until done / fail / three stuck steps / step limit. `done` is a claim; the verifier decides.
  * Page content only ever reaches the model inside the user turn (prompts.ts).
- *
- * OWNER: Zach.
  */
 
 export interface AgentCallbacks {

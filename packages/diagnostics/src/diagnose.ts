@@ -22,8 +22,6 @@ import {
  *
  * One structured-output call through getLlm() with the `diagnosis` role (Haiku by default,
  * AGENTPROOF_MODEL_DIAGNOSIS to override), the same door every other model call uses.
- *
- * OWNER: Vihan.
  */
 
 const SYSTEM = `You are diagnosing why an automated shopping-agent test failed against an online store.

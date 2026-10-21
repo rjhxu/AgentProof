@@ -30,7 +30,7 @@ import { config } from './config';
 import * as db from './db';
 
 /**
- * Report glue for the runner (W5, Zach; additive to Vihan's runner). No business logic of its
+ * Report glue for the runner. No business logic of its
  * own: the builders and renderers live in @agentproof/agent (report.ts, narrative.ts). This file
  * decides where the files go and reads them back for the HTTP routes.
  *

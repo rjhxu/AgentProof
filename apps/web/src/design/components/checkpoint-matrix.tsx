@@ -44,7 +44,7 @@ function Cell({ status, title }: { status: PatternStatus | 'pending'; title: str
 }
 
 /**
- * Checkpoints down, agents across: the shape of the table in docs/DEMO.md. Rows no agent
+ * Checkpoints down, agents across: the shape of the table in docs/RESULTS.md. Rows no agent
  * ran are hidden. Every cell carries a mark and a word, not colour alone.
  */
 export function CheckpointMatrix({ matrix, agents }: CheckpointMatrixProps) {

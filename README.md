@@ -101,10 +101,20 @@ Checks: `pnpm typecheck && pnpm test && pnpm format:check` (what CI runs) and `p
 | [AGENTS.md](docs/AGENTS.md)                      | The four agents: perception, models, cost, reports          |
 | [CODEFIX.md](docs/CODEFIX.md)                    | The code-fix pipeline, GitHub access, threat model          |
 | [SECURITY.md](docs/SECURITY.md)                  | Trust boundaries, safeguards, known limitations             |
-| [RESULTS.md](docs/RESULTS.md)                    | Live validation of the agents and the code-fix agent        
+| [RESULTS.md](docs/RESULTS.md)                    | Live validation of the agents and the code-fix agent        |
 | [DESIGN.md](docs/DESIGN.md)                      | Dashboard flow and visual system                            |
 | [storefront/](docs/storefront/bugs-and-fixes.md) | The test store's planted bugs, reference fixes and grader   |
 
 ## Status and limits
 
 AgentProof runs locally as a single-node service. Before you expose the runner to a network, read the known limitations in [SECURITY.md](docs/SECURITY.md#known-limitations). In short: the runner has no authentication, so keep it on a trusted host. Jobs run in an in-process queue, and state lives in SQLite.
+
+## Team
+
+Built at DubHacks 2026 by three people. Who built what, by area of the repository:
+
+| Who         | GitHub                                                 | Built                                                                                                                                                                                                                                                                                               |
+| ----------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Ryan Xu     | [@rjhxu](https://github.com/rjhxu)                     | The agents package (LLM layer, Alpha, Beta and Sigma, reports, CLI, scripted harness) and cross-agent attribution; the code-fix agent, its validation and GitHub App delivery; the runner's browser-run and report wiring; the test store's products, planted bugs, answer key and grader; the docs |
+| Zachary Li  | [@zacharyli293680](https://github.com/zacharyli293680) | The initial scaffold (spec, shared schemas, verifier, service skeletons); the dashboard (design system, the four-step flow, replay) and its GitHub App connection; store-URL missions derived from the catalog; diagnostics on the shared LLM layer                                                 |
+| Vihan Bagal | [@Vihan-Bagal](https://github.com/Vihan-Bagal)         | The Gamma agent and the runner's Gamma fix loop (diagnose, repair, apply, rematch); GitHub repository connections and persistence                                                                                                                                                                   |

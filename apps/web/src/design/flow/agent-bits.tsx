@@ -7,11 +7,7 @@ import type { AgentKind, ObservedCart } from '@agentproof/shared';
 import { senses, targetLine, type Sense } from '../format';
 import { BracesIcon, CheckIcon, CrossIcon, EyeIcon, SparkIcon, TextLinesIcon } from './icons';
 
-/*
- * The marks that identify a shopper and its verdict, shared by Findings and the Scan stage.
- * TODO(zach): scan-step.tsx keeps private copies of DESCRIPTOR, SenseIcons, VerdictMark,
- * TreePanel and CartLines; point it here and delete them.
- */
+/* The marks that identify a shopper and its verdict, shared by Findings and the Scan stage. */
 
 /** One plain-language line per shopper, for labels and tooltips. */
 export const DESCRIPTOR: Record<AgentKind, string> = {

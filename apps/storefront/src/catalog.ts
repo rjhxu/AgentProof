@@ -11,8 +11,6 @@
  *   merino-socks                essentials  DEMO BUG D (quantity-stepper.ts)
  *   studio-headphones           feature     DEMO BUG E (feature-layout.ts)
  *   canvas-tote                 simple      none (control scenario)
- *
- * OWNER: Ryan.
  */
 export interface Variant {
   id: string;

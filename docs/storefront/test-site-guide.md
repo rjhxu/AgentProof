@@ -139,7 +139,7 @@ git apply -R docs/storefront/patches/*.patch                # bugs back
 The code-fix agent reads source and writes a patch. Inside the AgentProof monorepo it could also read:
 
 - the answer key (`docs/storefront/`, if present)
-- AgentProof's own code and docs, which describe the planted bugs (`ARCHITECTURE.md`, `DEMO.md`, the fixtures)
+- AgentProof's own code and docs, which describe the planted bugs (`ARCHITECTURE.md`, `RESULTS.md`, the fixtures)
 
 A standalone repo contains only the store. It has one commit tagged `baseline` to reset to, and its diffs are clean to review. For the "after the fix" half of a demo, `scripts/make-fixed-store.sh <dest>` does this export and then applies the five reference patches (tag `fixed`), so the monorepo store keeps its bugs.
 
@@ -197,7 +197,7 @@ git push origin baseline
 | -------------------------- | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Store URL for missions     | `storeUrl` in `POST /missions`, e.g. `http://localhost:5050` | Works today. `localhost` is in the default `AGENTPROOF_ALLOWED_HOSTS`.                                                                                                                                            |
 | Repo the repair applies to | `config.storefrontDir` in `apps/runner/src/config.ts`        | **Hard-coded to `apps/storefront`.** Needs an override, e.g. `AGENTPROOF_STOREFRONT_DIR=/abs/path/to/northwind-storefront`, before `applyRepair` can target the external repo. Not built yet (runner is Vihan's). |
-| Source given to diagnosis  | `repoFiles` / `sourceExcerpts` in `diagnose()`               | Should read from the same directory as above (currently TODO in `routes.ts`).                                                                                                                                     |
+| Source given to diagnosis  | `repoFiles` / `sourceExcerpts` in `diagnose()`               | Should read from the same directory as above (not wired in `routes.ts` yet).                                                                                                                                      |
 | Patch paths                | Diffs from the code-fix agent                                | Should be relative to the store repo root (`src/views.ts`) and applied with `git -C <store> apply`. The monorepo reference patches need `-p3` there.                                                              |
 
 Missions to run (exact prompts and expected structured requirements are in bugs-and-fixes.md):

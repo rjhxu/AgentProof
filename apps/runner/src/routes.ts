@@ -141,7 +141,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  // One of the storefront's known scenarios (A-E, control), no model call. (W5, Zach)
+  // One of the storefront's known scenarios (A-E, control), no model call.
   app.post('/missions/fixture', async (req, reply) => {
     const body = FixtureMissionRequest.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: body.error.message });
@@ -156,7 +156,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     return {
       mission,
       runs: db.listRuns(mission.id),
-      // Artifacts-relative path of the cross-agent report once any run has finished. (W5)
+      // Artifacts-relative path of the cross-agent report once any run has finished.
       ...(missionReportExists(mission.id)
         ? { missionReportPath: missionReportRelativePath(mission.id) }
         : {}),
@@ -192,7 +192,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // Cross-agent mission report: the file written when the last run finished, rebuilt only when a
-  // run has finished since or with ?refresh=1, so a read never rewrites it. (W5, Zach)
+  // run has finished since or with ?refresh=1, so a read never rewrites it.
   app.get<{ Params: { id: string }; Querystring: { refresh?: string } }>(
     '/missions/:id/report',
     async (req, reply) => {
@@ -228,7 +228,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     return { run, issues: db.listIssues(run.id), repairs: db.listRepairsForRun(run.id) };
   });
 
-  // The agent's report, written by jobs.ts once the run has a verdict. (W5, Zach)
+  // The agent's report, written by jobs.ts once the run has a verdict.
   app.get<{ Params: { id: string } }>('/runs/:id/report', async (req, reply) => {
     const run = db.getRun(req.params.id);
     if (!run) return reply.code(404).send({ error: 'run not found' });
@@ -323,7 +323,6 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       return { issue };
     }
     const evidence = run.evidence.filter((e) => failure.evidenceIds.includes(e.id));
-    // TODO(vihan): pass repoFiles + sourceExcerpts from apps/storefront for better suspectedFiles.
     const issue = await diagnose({ mission, run, checkpoint: failure, evidence });
     db.saveIssue(issue);
     return { issue };
@@ -377,7 +376,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  // ---- artifacts (W5, Zach) ---------------------------------------------------
+  // ---- artifacts ---------------------------------------------------
   // Screenshots, aria snapshots, traces and both report kinds, by their artifacts-relative path:
   // GET /artifacts/<runId>/step-001.png, GET /artifacts/missions/<missionId>/report.md.
   fs.mkdirSync(config.artifactsDir, { recursive: true }); // the plugin requires an existing root
